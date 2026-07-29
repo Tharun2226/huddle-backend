@@ -1,18 +1,22 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
+import { getScopedUserIds } from '../common/team-scope';
 
 @Injectable()
 export class ActivityService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(user: AuthUser) {
-    if (user.role !== UserRole.MANAGER) {
-      throw new ForbiddenException('Managers only');
+    if (!user.isAdmin && !user.permissions.includes('activity.view')) {
+      throw new ForbiddenException('Insufficient permissions');
     }
+    const scopedIds = await getScopedUserIds(this.prisma, user);
     const events = await this.prisma.activityEvent.findMany({
-      where: { organizationId: user.organizationId },
+      where: {
+        organizationId: user.organizationId,
+        ...(user.isAdmin ? {} : { actorId: { in: scopedIds } }),
+      },
       orderBy: { at: 'desc' },
       take: 100,
     });

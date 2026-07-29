@@ -8,10 +8,10 @@ import {
   ActivityType,
   AuditAction,
   ExpenseStatus,
-  UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
+import { getScopedUserIds } from '../common/team-scope';
 import { CreateExpenseDto, DecisionDto } from './dto/expense.dto';
 
 @Injectable()
@@ -19,12 +19,11 @@ export class ExpensesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(user: AuthUser) {
+    const scopedIds = await getScopedUserIds(this.prisma, user);
     const expenses = await this.prisma.expense.findMany({
       where: {
         organizationId: user.organizationId,
-        ...(user.role === UserRole.MANAGER
-          ? {}
-          : { submitterId: user.id }),
+        ...(user.isAdmin ? {} : { submitterId: { in: scopedIds } }),
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -32,13 +31,15 @@ export class ExpensesService {
   }
 
   async pendingApprovals(user: AuthUser) {
-    if (user.role !== UserRole.MANAGER) {
-      throw new ForbiddenException('Managers only');
+    if (!user.isAdmin && !user.permissions.includes('expense.approve')) {
+      throw new ForbiddenException('Insufficient permissions');
     }
+    const scopedIds = await getScopedUserIds(this.prisma, user);
     const expenses = await this.prisma.expense.findMany({
       where: {
         organizationId: user.organizationId,
         status: ExpenseStatus.SUBMITTED,
+        ...(user.isAdmin ? {} : { submitterId: { in: scopedIds.filter((id) => id !== user.id) } }),
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -163,8 +164,8 @@ export class ExpensesService {
     activity: ActivityType,
     note: string,
   ) {
-    if (user.role !== UserRole.MANAGER) {
-      throw new ForbiddenException('Managers only');
+    if (!user.isAdmin && !user.permissions.includes('expense.approve')) {
+      throw new ForbiddenException('Insufficient permissions');
     }
     const expense = await this.findScoped(user, id);
     if (expense.status !== ExpenseStatus.SUBMITTED) {
@@ -202,20 +203,13 @@ export class ExpensesService {
     return this.map(updated);
   }
 
-  private async findScoped(
-    user: AuthUser,
-    id: string,
-    ownOnly = false,
-  ) {
+  private async findScoped(user: AuthUser, id: string, ownOnly = false) {
     const expense = await this.prisma.expense.findFirst({
       where: { id, organizationId: user.organizationId },
     });
     if (!expense) throw new NotFoundException('Expense not found');
-    if (
-      (ownOnly || user.role !== UserRole.MANAGER) &&
-      expense.submitterId !== user.id &&
-      user.role !== UserRole.MANAGER
-    ) {
+    const scopedIds = await getScopedUserIds(this.prisma, user);
+    if ((ownOnly || !user.isAdmin) && !scopedIds.includes(expense.submitterId)) {
       throw new ForbiddenException('Not allowed to access this expense');
     }
     if (ownOnly && expense.submitterId !== user.id) {
@@ -224,22 +218,7 @@ export class ExpensesService {
     return expense;
   }
 
-  private map(e: {
-    id: string;
-    amount: { toString(): string } | number;
-    category: string;
-    date: Date;
-    merchant: string;
-    notes: string;
-    status: ExpenseStatus;
-    submitterId: string;
-    receiptUrl: string | null;
-    createdAt: Date;
-    decidedAt: Date | null;
-    decidedById: string | null;
-    decisionNote: string;
-    reimbursedAt: Date | null;
-  }) {
+  private map(e: any) {
     const categoryMap: Record<string, string> = {
       MEALS: 'meals',
       TRAVEL: 'travel',
@@ -249,7 +228,7 @@ export class ExpensesService {
       CLIENT: 'client',
       OTHER: 'other',
     };
-    const statusMap: Record<ExpenseStatus, string> = {
+    const statusMap: Record<string, string> = {
       DRAFT: 'draft',
       SUBMITTED: 'submitted',
       APPROVED: 'approved',

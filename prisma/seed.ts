@@ -1,4 +1,9 @@
-import { PrismaClient, UserRole, TaskStatus, TaskPriority, ExpenseStatus, ExpenseCategory, ActivityType } from '@prisma/client';
+import {
+  PrismaClient,
+  ExpenseStatus,
+  ExpenseCategory,
+  ActivityType,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -6,12 +11,52 @@ const prisma = new PrismaClient();
 const SEED_PASSWORD = 'Huddle@123';
 
 const IDS = {
-  org: 'org_huddle',
-  you: 'u_you',
-  aisha: 'u_aisha',
-  rahul: 'u_rahul',
-  priya: 'u_priya',
+  platformOrg: 'org_platform',
+  cloveOrg: 'org_clove',
+  superAdmin: 'u_superadmin',
+  admin: 'u_jyotheeswar',
+  kiran: 'u_kiran',
+  sowith: 'u_sowith',
+  tharun: 'u_tharun',
+  reddy: 'u_reddy',
+  sai: 'u_sai',
+  subbu: 'u_subbu',
 };
+
+const DEFAULT_PERMISSIONS = [
+  'task.create',
+  'task.assign',
+  'task.update',
+  'task.view_all',
+  'expense.create',
+  'expense.approve',
+  'expense.reject',
+  'expense.reimburse',
+  'expense.view_all',
+  'meeting.create',
+  'meeting.view_all',
+  'user.invite',
+  'user.update',
+  'role.manage',
+  'org.settings',
+  'activity.view',
+];
+
+const MANAGER_PERMISSIONS = [
+  'task.create',
+  'task.assign',
+  'task.update',
+  'task.view_all',
+  'expense.create',
+  'expense.approve',
+  'expense.reject',
+  'expense.reimburse',
+  'expense.view_all',
+  'meeting.create',
+  'meeting.view_all',
+  'user.invite',
+  'activity.view',
+];
 
 function day(offset: number) {
   const n = new Date();
@@ -32,66 +77,255 @@ function soon() {
   return n;
 }
 
+async function wipeAll() {
+  await prisma.auditLog.deleteMany();
+  await prisma.activityEvent.deleteMany();
+  await prisma.taskComment.deleteMany();
+  await prisma.taskChecklistItem.deleteMany();
+  await prisma.meetingAttendee.deleteMany();
+  await prisma.refreshToken.deleteMany();
+  await prisma.expense.deleteMany();
+  await prisma.task.deleteMany();
+  await prisma.meeting.deleteMany();
+  await prisma.userRole.deleteMany();
+  await prisma.rolePermission.deleteMany();
+  await prisma.role.deleteMany();
+  await prisma.orgTaskStatus.deleteMany();
+  await prisma.orgTaskPriority.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.organization.deleteMany();
+}
+
 async function main() {
   const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
 
-  // Wipe pilot data in dependency order for idempotent re-seed
-  await prisma.auditLog.deleteMany({ where: { organizationId: IDS.org } });
-  await prisma.activityEvent.deleteMany({ where: { organizationId: IDS.org } });
-  await prisma.taskComment.deleteMany({
-    where: { task: { organizationId: IDS.org } },
-  });
-  await prisma.taskChecklistItem.deleteMany({
-    where: { task: { organizationId: IDS.org } },
-  });
-  await prisma.meetingAttendee.deleteMany({
-    where: { meeting: { organizationId: IDS.org } },
-  });
-  await prisma.refreshToken.deleteMany({
-    where: { user: { organizationId: IDS.org } },
-  });
-  await prisma.expense.deleteMany({ where: { organizationId: IDS.org } });
-  await prisma.task.deleteMany({ where: { organizationId: IDS.org } });
-  await prisma.meeting.deleteMany({ where: { organizationId: IDS.org } });
-  await prisma.user.deleteMany({ where: { organizationId: IDS.org } });
-  await prisma.organization.deleteMany({ where: { id: IDS.org } });
+  await wipeAll();
 
+  for (const code of DEFAULT_PERMISSIONS) {
+    await prisma.permission.upsert({
+      where: { code },
+      create: { code },
+      update: {},
+    });
+  }
+  const allPerms = await prisma.permission.findMany({
+    where: { code: { in: DEFAULT_PERMISSIONS } },
+  });
+
+  // Platform org + super admin
   await prisma.organization.create({
     data: {
-      id: IDS.org,
-      name: 'Huddle',
-      slug: 'huddle',
+      id: IDS.platformOrg,
+      name: 'Huddle Platform',
+      slug: 'platform',
+      isActive: true,
+    },
+  });
+  await prisma.user.create({
+    data: {
+      id: IDS.superAdmin,
+      organizationId: IDS.platformOrg,
+      name: 'Super Admin',
+      email: 'superadmin@huddle.app',
+      title: 'Platform Admin',
+      passwordHash,
+      isSuperAdmin: true,
     },
   });
 
-  const users = [
+  // Clove org
+  await prisma.organization.create({
+    data: {
+      id: IDS.cloveOrg,
+      name: 'Clove',
+      slug: 'clove',
+      isActive: true,
+    },
+  });
+
+  const adminRole = await prisma.role.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'Admin',
+      slug: 'admin',
+      isAdmin: true,
+      sortOrder: 0,
+    },
+  });
+  for (const perm of allPerms) {
+    await prisma.rolePermission.create({
+      data: { roleId: adminRole.id, permissionId: perm.id },
+    });
+  }
+
+  const managerRole = await prisma.role.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'Manager',
+      slug: 'manager',
+      sortOrder: 1,
+    },
+  });
+  for (const perm of allPerms.filter((p) => MANAGER_PERMISSIONS.includes(p.code))) {
+    await prisma.rolePermission.create({
+      data: { roleId: managerRole.id, permissionId: perm.id },
+    });
+  }
+
+  const memberRole = await prisma.role.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'Member',
+      slug: 'member',
+      isDefault: true,
+      sortOrder: 2,
+    },
+  });
+  for (const perm of allPerms.filter((p) =>
+    ['task.create', 'task.update', 'expense.create'].includes(p.code),
+  )) {
+    await prisma.rolePermission.create({
+      data: { roleId: memberRole.id, permissionId: perm.id },
+    });
+  }
+
+  const statusTodo = await prisma.orgTaskStatus.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'To Do',
+      slug: 'todo',
+      sortOrder: 0,
+      isDefault: true,
+      color: '#6B7280',
+    },
+  });
+  const statusDoing = await prisma.orgTaskStatus.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'In Progress',
+      slug: 'in_progress',
+      sortOrder: 1,
+      color: '#3B82F6',
+    },
+  });
+  const statusReview = await prisma.orgTaskStatus.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'In Review',
+      slug: 'in_review',
+      sortOrder: 2,
+      color: '#F59E0B',
+    },
+  });
+  const statusDone = await prisma.orgTaskStatus.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'Done',
+      slug: 'done',
+      sortOrder: 3,
+      isDone: true,
+      color: '#10B981',
+    },
+  });
+
+  const priorityHigh = await prisma.orgTaskPriority.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'High',
+      slug: 'high',
+      sortOrder: 1,
+      color: '#F59E0B',
+    },
+  });
+  const priorityNormal = await prisma.orgTaskPriority.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'Normal',
+      slug: 'normal',
+      sortOrder: 2,
+      isDefault: true,
+      color: '#6B7280',
+    },
+  });
+  await prisma.orgTaskPriority.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'Urgent',
+      slug: 'urgent',
+      sortOrder: 0,
+      color: '#EF4444',
+    },
+  });
+  await prisma.orgTaskPriority.create({
+    data: {
+      organizationId: IDS.cloveOrg,
+      name: 'Low',
+      slug: 'low',
+      sortOrder: 3,
+      color: '#3B82F6',
+    },
+  });
+
+  const users: Array<{
+    id: string;
+    name: string;
+    email: string;
+    title: string;
+    roleId: string;
+    managerId?: string;
+  }> = [
     {
-      id: IDS.you,
-      name: 'Ajyothee Reddy',
+      id: IDS.admin,
+      name: 'Jyotheeswar Reddy',
       email: 'ajyotheeswarreddy@gmail.com',
-      role: UserRole.MANAGER,
+      title: 'Organization Admin',
+      roleId: adminRole.id,
+    },
+    {
+      id: IDS.kiran,
+      name: 'Kiran',
+      email: 'kiran@clove.team',
       title: 'Engineering Manager',
+      roleId: managerRole.id,
     },
     {
-      id: IDS.aisha,
-      name: 'Aisha Khan',
-      email: 'aisha@huddle.team',
-      role: UserRole.MEMBER,
-      title: 'Product Designer',
+      id: IDS.sowith,
+      name: 'Sowith',
+      email: 'sowith@clove.team',
+      title: 'Product Manager',
+      roleId: managerRole.id,
     },
     {
-      id: IDS.rahul,
-      name: 'Rahul Menon',
-      email: 'rahul@huddle.team',
-      role: UserRole.MEMBER,
+      id: IDS.tharun,
+      name: 'Tharun',
+      email: 'tharun@clove.team',
       title: 'Backend Engineer',
+      roleId: memberRole.id,
+      managerId: IDS.kiran,
     },
     {
-      id: IDS.priya,
-      name: 'Priya Nair',
-      email: 'priya@huddle.team',
-      role: UserRole.MEMBER,
-      title: 'Mobile Engineer',
+      id: IDS.reddy,
+      name: 'Reddy',
+      email: 'reddy@clove.team',
+      title: 'Frontend Engineer',
+      roleId: memberRole.id,
+      managerId: IDS.kiran,
+    },
+    {
+      id: IDS.sai,
+      name: 'Sai',
+      email: 'sai@clove.team',
+      title: 'QA Engineer',
+      roleId: memberRole.id,
+      managerId: IDS.kiran,
+    },
+    {
+      id: IDS.subbu,
+      name: 'Subbu',
+      email: 'subbu@clove.team',
+      title: 'Designer',
+      roleId: memberRole.id,
+      managerId: IDS.sowith,
     },
   ];
 
@@ -99,63 +333,53 @@ async function main() {
     await prisma.user.create({
       data: {
         id: u.id,
-        organizationId: IDS.org,
+        organizationId: IDS.cloveOrg,
         name: u.name,
         email: u.email.toLowerCase(),
-        role: u.role,
         title: u.title,
+        managerId: u.managerId,
         passwordHash,
+        roles: { create: { roleId: u.roleId } },
       },
     });
   }
 
   const s = soon();
-
   const meetings = [
     {
       id: 'm_standup',
-      title: 'Daily Standup',
+      title: 'Clove Daily Standup',
       start: s,
       end: new Date(s.getTime() + 15 * 60 * 1000),
-      attendeeIds: [IDS.you, IDS.aisha, IDS.rahul],
+      attendeeIds: [IDS.kiran, IDS.tharun, IDS.reddy, IDS.sai],
       location: 'Google Meet',
-      notes: 'Blockers, yesterday, today. Keep it to 15.',
+      notes: 'Kiran team blockers and plans.',
+      recurrence: 'daily',
+      weekdays: [] as number[],
     },
     {
       id: 'm_design',
-      title: 'Design Review — Expense Flow',
+      title: 'Design Sync',
       start: new Date(s.getTime() + 2 * 60 * 60 * 1000),
       end: new Date(s.getTime() + 3 * 60 * 60 * 1000),
-      attendeeIds: [IDS.you, IDS.aisha, IDS.priya],
-      location: 'Meeting Room 2',
-      notes: 'Walk through the receipt capture screens end to end.',
-    },
-    {
-      id: 'm_1on1',
-      title: '1:1 with Rahul',
-      start: at(1, 11, 30),
-      end: at(1, 12),
-      attendeeIds: [IDS.you, IDS.rahul],
-      location: 'Zoom',
-      notes: 'Career growth, Q3 goals.',
-    },
-    {
-      id: 'm_sprint',
-      title: 'Sprint Planning',
-      start: at(2, 10),
-      end: at(2, 11, 30),
-      attendeeIds: [IDS.you, IDS.aisha, IDS.rahul, IDS.priya],
+      attendeeIds: [IDS.sowith, IDS.subbu],
       location: 'Meeting Room 1',
-      notes: 'Groom the backlog and size the next two weeks.',
+      notes: 'Review Subbu mockups.',
+      recurrence: 'weekly',
+      // Dart weekdays: 2=Tue, 4=Thu
+      weekdays: [2, 4],
     },
     {
-      id: 'm_client',
-      title: 'Client Sync — Northwind',
-      start: at(3, 15),
-      end: at(3, 16),
-      attendeeIds: [IDS.you, IDS.rahul],
-      location: 'Google Meet',
-      notes: '',
+      id: 'm_leadership',
+      title: 'Leadership Check-in',
+      start: at(1, 11),
+      end: at(1, 11, 30),
+      attendeeIds: [IDS.admin, IDS.kiran, IDS.sowith],
+      location: 'Zoom',
+      notes: 'Weekly org pulse.',
+      recurrence: 'weekly',
+      // 5=Fri
+      weekdays: [5],
     },
   ];
 
@@ -163,175 +387,100 @@ async function main() {
     await prisma.meeting.create({
       data: {
         id: m.id,
-        organizationId: IDS.org,
+        organizationId: IDS.cloveOrg,
         title: m.title,
         start: m.start,
         end: m.end,
         location: m.location,
         notes: m.notes,
-        attendees: {
-          create: m.attendeeIds.map((userId) => ({ userId })),
-        },
+        recurrence: m.recurrence,
+        weekdays: m.weekdays,
+        attendees: { create: m.attendeeIds.map((userId) => ({ userId })) },
       },
     });
   }
 
-  type SeedTask = {
-    id: string;
-    title: string;
-    description?: string;
-    status: TaskStatus;
-    priority: TaskPriority;
-    dueDate: Date;
-    assigneeId: string;
-    tags: string[];
-    createdAt: Date;
-    checklist?: { id: string; label: string; done?: boolean }[];
-    comments?: { id: string; authorId: string; body: string; createdAt: Date }[];
-  };
-
-  const tasks: SeedTask[] = [
+  const tasks = [
     {
-      id: 't_deck',
-      title: 'Finalize Q3 roadmap deck',
-      description:
-        'Pull the milestone table from the planning doc, tighten the narrative to five slides, and get it in front of leadership before Friday.',
-      status: TaskStatus.IN_PROGRESS,
-      priority: TaskPriority.HIGH,
+      id: 't_api',
+      title: 'Finish auth refresh endpoint',
+      description: 'Validate refresh rotation and inactive-org checks.',
+      statusId: statusDoing.id,
+      priorityId: priorityHigh.id,
       dueDate: at(0, 17),
-      assigneeId: IDS.aisha,
-      tags: ['planning', 'q3'],
-      createdAt: at(-3, 9),
-      checklist: [
-        { id: 'c1_deck', label: 'Outline the narrative', done: true },
-        { id: 'c2_deck', label: 'Pull milestone table', done: true },
-        { id: 'c3_deck', label: 'Design pass on charts' },
-        { id: 'c4_deck', label: 'Share for review' },
-      ],
-      comments: [
-        {
-          id: 'cm1',
-          authorId: IDS.you,
-          body: 'Lead with the outcome slide — leadership skims the rest.',
-          createdAt: at(-1, 14, 20),
-        },
-        {
-          id: 'cm2',
-          authorId: IDS.aisha,
-          body: 'Makes sense. Reordering now, should have a draft by 4.',
-          createdAt: at(-1, 15, 5),
-        },
-      ],
-    },
-    {
-      id: 't_pr',
-      title: 'Review PR #221 — auth token refresh',
-      description:
-        'Rahul reworked the refresh interceptor. Check the retry path and that we are not looping on a 401.',
-      status: TaskStatus.IN_REVIEW,
-      priority: TaskPriority.HIGH,
-      dueDate: at(0, 18),
-      assigneeId: IDS.you,
-      tags: ['code-review'],
-      createdAt: at(-1, 11),
-      checklist: [
-        { id: 'c1_pr', label: 'Read the diff', done: true },
-        { id: 'c2_pr', label: 'Pull and run locally' },
-      ],
-    },
-    {
-      id: 't_invoice',
-      title: 'Send Northwind invoice',
-      description: 'March retainer. Finance needs it filed before month end.',
-      status: TaskStatus.DONE,
-      priority: TaskPriority.NORMAL,
-      dueDate: at(0, 12),
-      assigneeId: IDS.rahul,
-      tags: ['finance'],
+      assigneeId: IDS.tharun,
+      tags: ['backend'],
       createdAt: at(-2, 10),
-    },
-    {
-      id: 't_smartscan',
-      title: 'Wire SmartScan receipt parsing',
-      description:
-        'Hook the receipt upload into the BFF endpoint and show parsed merchant and amount back to the user for confirmation.',
-      status: TaskStatus.IN_PROGRESS,
-      priority: TaskPriority.URGENT,
-      dueDate: at(1, 17),
-      assigneeId: IDS.priya,
-      tags: ['expenses', 'api'],
-      createdAt: at(-4, 9, 30),
       checklist: [
-        { id: 'c1_ss', label: 'Camera + gallery picker', done: true },
-        { id: 'c2_ss', label: 'Upload to BFF' },
-        { id: 'c3_ss', label: 'Confirmation sheet' },
+        { id: 'c_api_1', label: 'Write unit tests', done: true },
+        { id: 'c_api_2', label: 'Update Swagger notes' },
       ],
     },
     {
-      id: 't_overdue',
-      title: 'Update the onboarding runbook',
-      description: 'The setup steps drifted after the tooling change.',
-      status: TaskStatus.TODO,
-      priority: TaskPriority.LOW,
-      dueDate: at(-2, 17),
-      assigneeId: IDS.rahul,
-      tags: ['docs'],
-      createdAt: at(-8, 14),
+      id: 't_ui',
+      title: 'Polish team roster cards',
+      description: 'Show manager name under each member.',
+      statusId: statusReview.id,
+      priorityId: priorityNormal.id,
+      dueDate: at(0, 16),
+      assigneeId: IDS.reddy,
+      tags: ['frontend'],
+      createdAt: at(-1, 11),
     },
     {
-      id: 't_webhook',
-      title: 'Set up ClickUp webhook receiver',
-      description:
-        'Real-time status updates pushed to the BFF so the board does not need polling.',
-      status: TaskStatus.TODO,
-      priority: TaskPriority.NORMAL,
-      dueDate: at(2, 17),
-      assigneeId: IDS.rahul,
-      tags: ['api', 'infra'],
-      createdAt: at(-1, 16),
+      id: 't_qa',
+      title: 'Regression pass on expenses',
+      description: 'Cover submit → approve → reimburse path.',
+      statusId: statusTodo.id,
+      priorityId: priorityHigh.id,
+      dueDate: at(1, 17),
+      assigneeId: IDS.sai,
+      tags: ['qa'],
+      createdAt: at(-1, 9),
     },
     {
-      id: 't_empty_states',
-      title: 'Design empty states for Tasks & Expenses',
-      status: TaskStatus.TODO,
-      priority: TaskPriority.NORMAL,
-      dueDate: at(3, 17),
-      assigneeId: IDS.aisha,
+      id: 't_mgr_kiran',
+      title: 'Plan sprint board for Kiran team',
+      description: 'Prioritize Tharun / Reddy / Sai capacity.',
+      statusId: statusDoing.id,
+      priorityId: priorityNormal.id,
+      dueDate: at(0, 18),
+      assigneeId: IDS.kiran,
+      tags: ['planning'],
+      createdAt: at(-3, 9),
+    },
+    {
+      id: 't_design',
+      title: 'Expense empty-state illustrations',
+      description: 'Two light-mode frames for Subbu review with Sowith.',
+      statusId: statusDoing.id,
+      priorityId: priorityNormal.id,
+      dueDate: at(1, 15),
+      assigneeId: IDS.subbu,
       tags: ['design'],
+      createdAt: at(-2, 14),
+    },
+    {
+      id: 't_sowith',
+      title: 'Product roadmap outline',
+      description: 'Next two releases for Clove.',
+      statusId: statusTodo.id,
+      priorityId: priorityHigh.id,
+      dueDate: at(2, 17),
+      assigneeId: IDS.sowith,
+      tags: ['product'],
       createdAt: at(-1, 10),
     },
     {
-      id: 't_fcm',
-      title: 'Meeting reminder notifications (15 min prior)',
-      description: 'FCM scheduled push, 15 minutes before a meeting or task due time.',
-      status: TaskStatus.TODO,
-      priority: TaskPriority.NORMAL,
-      dueDate: at(5, 17),
-      assigneeId: IDS.priya,
-      tags: ['notifications'],
-      createdAt: day(-1),
-    },
-    {
-      id: 't_offline',
-      title: 'Offline cache for tasks and expenses',
-      description: 'Hive boxes for read-only viewing when the network drops.',
-      status: TaskStatus.TODO,
-      priority: TaskPriority.LOW,
-      dueDate: at(7, 17),
-      assigneeId: IDS.priya,
-      tags: ['offline'],
-      createdAt: day(-2),
-    },
-    {
-      id: 't_policy',
-      title: 'Category policy limits',
-      description: 'Flag expenses over the category cap before submission.',
-      status: TaskStatus.DONE,
-      priority: TaskPriority.NORMAL,
+      id: 't_admin',
+      title: 'Review org permissions matrix',
+      description: 'Confirm Manager has Create users enabled.',
+      statusId: statusDone.id,
+      priorityId: priorityNormal.id,
       dueDate: at(-1, 17),
-      assigneeId: IDS.you,
-      tags: ['expenses'],
-      createdAt: day(-5),
+      assigneeId: IDS.admin,
+      tags: ['admin'],
+      createdAt: at(-4, 10),
     },
   ];
 
@@ -339,11 +488,11 @@ async function main() {
     await prisma.task.create({
       data: {
         id: t.id,
-        organizationId: IDS.org,
+        organizationId: IDS.cloveOrg,
         title: t.title,
-        description: t.description ?? '',
-        status: t.status,
-        priority: t.priority,
+        description: t.description,
+        statusId: t.statusId,
+        priorityId: t.priorityId,
         dueDate: t.dueDate,
         assigneeId: t.assigneeId,
         tags: t.tags,
@@ -358,16 +507,6 @@ async function main() {
               })),
             }
           : undefined,
-        comments: t.comments
-          ? {
-              create: t.comments.map((c) => ({
-                id: c.id,
-                authorId: c.authorId,
-                body: c.body,
-                createdAt: c.createdAt,
-              })),
-            }
-          : undefined,
       },
     });
   }
@@ -375,92 +514,63 @@ async function main() {
   const expenses = [
     {
       id: 'e_lunch',
-      amount: 1200,
-      category: ExpenseCategory.CLIENT,
+      amount: 850,
+      category: ExpenseCategory.MEALS,
       date: day(-1),
-      merchant: 'Toit Brewpub',
-      notes: 'Lunch with the Northwind team after the quarterly review.',
+      merchant: 'Third Wave Coffee',
+      notes: 'Team lunch after standup.',
       status: ExpenseStatus.SUBMITTED,
-      submitterId: IDS.rahul,
-      createdAt: at(-1, 14),
+      submitterId: IDS.tharun,
+      createdAt: at(-1, 13),
     },
     {
-      id: 'e_taxi',
-      amount: 450,
+      id: 'e_cab',
+      amount: 420,
       category: ExpenseCategory.TRAVEL,
       date: day(-1),
       merchant: 'Uber',
-      notes: 'Airport drop for the client visit.',
+      notes: 'Client office visit.',
       status: ExpenseStatus.SUBMITTED,
-      submitterId: IDS.aisha,
+      submitterId: IDS.sai,
       createdAt: at(-1, 19),
     },
     {
       id: 'e_figma',
-      amount: 1350,
+      amount: 1500,
       category: ExpenseCategory.SOFTWARE,
-      date: day(-4),
+      date: day(-5),
       merchant: 'Figma',
-      notes: 'Monthly seat for the design system work.',
+      notes: 'Design seat.',
       status: ExpenseStatus.APPROVED,
-      submitterId: IDS.aisha,
-      createdAt: at(-4, 11),
-      decidedAt: at(-3, 9),
-      decidedById: IDS.you,
+      submitterId: IDS.subbu,
+      createdAt: at(-5, 11),
+      decidedAt: at(-4, 10),
+      decidedById: IDS.sowith,
     },
     {
-      id: 'e_hotel',
-      amount: 6800,
-      category: ExpenseCategory.ACCOMMODATION,
-      date: day(-12),
-      merchant: 'Ibis Bengaluru',
-      notes: 'Two nights for the onsite.',
-      status: ExpenseStatus.REIMBURSED,
-      submitterId: IDS.rahul,
-      createdAt: at(-12, 20),
-      decidedAt: at(-10, 10),
-      decidedById: IDS.you,
-      reimbursedAt: day(-6),
-    },
-    {
-      id: 'e_coffee',
-      amount: 320,
-      category: ExpenseCategory.MEALS,
-      date: day(0),
-      merchant: 'Third Wave Coffee',
-      notes: 'Team coffee after standup.',
-      status: ExpenseStatus.DRAFT,
-      submitterId: IDS.you,
-      createdAt: at(0, 9, 40),
-    },
-    {
-      id: 'e_monitor',
-      amount: 14500,
+      id: 'e_supplies',
+      amount: 2200,
       category: ExpenseCategory.SUPPLIES,
-      date: day(-8),
-      merchant: 'Croma',
-      notes: 'Second monitor for the new desk setup.',
-      status: ExpenseStatus.REJECTED,
-      submitterId: IDS.priya,
-      createdAt: at(-8, 17),
-      decidedAt: at(-7, 11),
-      decidedById: IDS.you,
-      decisionNote:
-        'Over the supplies cap — please raise a hardware request instead so it comes out of the equipment budget.',
+      date: day(-3),
+      merchant: 'Amazon',
+      notes: 'Desk accessories.',
+      status: ExpenseStatus.DRAFT,
+      submitterId: IDS.reddy,
+      createdAt: at(-3, 16),
     },
     {
-      id: 'e_parking',
-      amount: 180,
+      id: 'e_reimb',
+      amount: 600,
       category: ExpenseCategory.TRAVEL,
-      date: day(-2),
-      merchant: 'Phoenix Mall Parking',
+      date: day(-10),
+      merchant: 'Metro Card',
       notes: '',
       status: ExpenseStatus.REIMBURSED,
-      submitterId: IDS.priya,
-      createdAt: at(-2, 18),
-      decidedAt: at(-2, 20),
-      decidedById: IDS.you,
-      reimbursedAt: day(-1),
+      submitterId: IDS.tharun,
+      createdAt: at(-10, 9),
+      decidedAt: at(-9, 11),
+      decidedById: IDS.kiran,
+      reimbursedAt: day(-7),
     },
   ];
 
@@ -468,7 +578,7 @@ async function main() {
     await prisma.expense.create({
       data: {
         id: e.id,
-        organizationId: IDS.org,
+        organizationId: IDS.cloveOrg,
         amount: e.amount,
         category: e.category,
         date: e.date,
@@ -479,7 +589,6 @@ async function main() {
         createdAt: e.createdAt,
         decidedAt: e.decidedAt,
         decidedById: e.decidedById,
-        decisionNote: e.decisionNote ?? '',
         reimbursedAt: e.reimbursedAt,
       },
     });
@@ -488,71 +597,46 @@ async function main() {
   const activity = [
     {
       id: 'a1',
-      actorId: IDS.rahul,
+      actorId: IDS.tharun,
       type: ActivityType.EXPENSE_SUBMITTED,
-      subject: 'Toit Brewpub',
-      amount: 1200,
-      at: at(-1, 14),
+      subject: 'Third Wave Coffee',
+      amount: 850,
+      at: at(-1, 13),
       targetId: 'e_lunch',
     },
     {
       id: 'a2',
-      actorId: IDS.aisha,
+      actorId: IDS.sai,
       type: ActivityType.EXPENSE_SUBMITTED,
       subject: 'Uber',
-      amount: 450,
+      amount: 420,
       at: at(-1, 19),
-      targetId: 'e_taxi',
+      targetId: 'e_cab',
     },
     {
       id: 'a3',
-      actorId: IDS.rahul,
-      type: ActivityType.TASK_COMPLETED,
-      subject: 'Send Northwind invoice',
-      at: at(0, 11, 45),
-      targetId: 't_invoice',
+      actorId: IDS.sowith,
+      type: ActivityType.EXPENSE_APPROVED,
+      subject: 'Figma',
+      amount: 1500,
+      at: at(-4, 10),
+      targetId: 'e_figma',
     },
     {
       id: 'a4',
-      actorId: IDS.aisha,
-      type: ActivityType.TASK_COMMENTED,
-      subject: 'Finalize Q3 roadmap deck',
-      at: at(-1, 15, 5),
-      targetId: 't_deck',
+      actorId: IDS.reddy,
+      type: ActivityType.TASK_MOVED,
+      subject: 'Polish team roster cards',
+      at: at(0, 10, 15),
+      targetId: 't_ui',
     },
     {
       id: 'a5',
-      actorId: IDS.you,
-      type: ActivityType.EXPENSE_REJECTED,
-      subject: 'Croma',
-      amount: 14500,
-      at: at(-7, 11),
-      targetId: 'e_monitor',
-    },
-    {
-      id: 'a6',
-      actorId: IDS.you,
+      actorId: IDS.admin,
       type: ActivityType.TASK_COMPLETED,
-      subject: 'Category policy limits',
-      at: at(-1, 16, 30),
-      targetId: 't_policy',
-    },
-    {
-      id: 'a7',
-      actorId: IDS.priya,
-      type: ActivityType.TASK_MOVED,
-      subject: 'Wire SmartScan receipt parsing',
-      at: at(0, 10, 15),
-      targetId: 't_smartscan',
-    },
-    {
-      id: 'a8',
-      actorId: IDS.you,
-      type: ActivityType.EXPENSE_APPROVED,
-      subject: 'Figma',
-      amount: 1350,
-      at: at(-3, 9),
-      targetId: 'e_figma',
+      subject: 'Review org permissions matrix',
+      at: at(-1, 16),
+      targetId: 't_admin',
     },
   ];
 
@@ -560,7 +644,7 @@ async function main() {
     await prisma.activityEvent.create({
       data: {
         id: a.id,
-        organizationId: IDS.org,
+        organizationId: IDS.cloveOrg,
         actorId: a.actorId,
         type: a.type,
         subject: a.subject,
@@ -571,10 +655,15 @@ async function main() {
     });
   }
 
-  console.log('Huddle seed complete.');
-  console.log('Pilot password for all users:', SEED_PASSWORD);
-  console.log('Manager:', 'ajyotheeswarreddy@gmail.com');
-  console.log('Members: aisha@huddle.team, rahul@huddle.team, priya@huddle.team');
+  console.log('Clove seed complete.');
+  console.log('Password for all users:', SEED_PASSWORD);
+  console.log('');
+  console.log('Super Admin: superadmin@huddle.app');
+  console.log('Org: Clove');
+  console.log('Admin:   ajyotheeswarreddy@gmail.com (Jyotheeswar Reddy)');
+  console.log('Manager: kiran@clove.team  → members tharun, reddy, sai');
+  console.log('Manager: sowith@clove.team → member subbu');
+  console.log('Members: tharun@clove.team, reddy@clove.team, sai@clove.team, subbu@clove.team');
 }
 
 main()

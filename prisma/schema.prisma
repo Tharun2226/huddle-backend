@@ -7,25 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserRole {
-  MANAGER
-  MEMBER
-}
-
-enum TaskStatus {
-  TODO
-  IN_PROGRESS
-  IN_REVIEW
-  DONE
-}
-
-enum TaskPriority {
-  URGENT
-  HIGH
-  NORMAL
-  LOW
-}
-
 enum ExpenseStatus {
   DRAFT
   SUBMITTED
@@ -66,6 +47,7 @@ model Organization {
   id        String   @id @default(cuid())
   name      String
   slug      String   @unique
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -75,22 +57,114 @@ model Organization {
   expenses        Expense[]
   activityEvents  ActivityEvent[]
   auditLogs       AuditLog[]
+  roles           Role[]
+  taskStatuses    OrgTaskStatus[]
+  taskPriorities  OrgTaskPriority[]
+}
+
+model Role {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  isDefault      Boolean  @default(false)
+  isAdmin        Boolean  @default(false)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users        UserRole[]
+  permissions  RolePermission[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  code        String @unique
+  description String @default("")
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model OrgTaskStatus {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  color          String   @default("#6B7280")
+  sortOrder      Int      @default(0)
+  isDefault      Boolean  @default(false)
+  isDone         Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model OrgTaskPriority {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  color          String   @default("#6B7280")
+  sortOrder      Int      @default(0)
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
 }
 
 model User {
   id             String   @id @default(cuid())
   organizationId String
+  managerId      String?
   email          String
   name           String
   title          String   @default("")
-  role           UserRole @default(MEMBER)
   passwordHash   String
+  isSuperAdmin   Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  manager      User?        @relation("ManagerReports", fields: [managerId], references: [id])
+  reports      User[]       @relation("ManagerReports")
 
+  roles            UserRole[]
   assignedTasks    Task[]           @relation("TaskAssignee")
+  taskAssignments  TaskAssignee[]
   taskComments     TaskComment[]
   meetingAttendees MeetingAttendee[]
   expenses         Expense[]        @relation("ExpenseSubmitter")
@@ -101,6 +175,7 @@ model User {
 
   @@unique([organizationId, email])
   @@index([organizationId])
+  @@index([managerId])
 }
 
 model RefreshToken {
@@ -116,26 +191,41 @@ model RefreshToken {
 }
 
 model Task {
-  id             String       @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   title          String
-  description    String       @default("")
-  status         TaskStatus   @default(TODO)
-  priority       TaskPriority @default(NORMAL)
+  description    String   @default("")
+  statusId       String
+  priorityId     String
   dueDate        DateTime?
   assigneeId     String
-  tags           String[]     @default([])
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  tags           String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assignee     User                @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  status       OrgTaskStatus       @relation(fields: [statusId], references: [id])
+  priority     OrgTaskPriority     @relation(fields: [priorityId], references: [id])
   checklist    TaskChecklistItem[]
   comments     TaskComment[]
+  meetings     Meeting[]
+  assignees    TaskAssignee[]
 
   @@index([organizationId])
   @@index([assigneeId])
-  @@index([status])
+  @@index([statusId])
+}
+
+model TaskAssignee {
+  taskId String
+  userId String
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+  @@index([userId])
 }
 
 model TaskChecklistItem {
@@ -171,14 +261,23 @@ model Meeting {
   end            DateTime
   location       String   @default("")
   notes          String   @default("")
+  /// Join / redirect URL (Meet, Zoom, etc.)
+  link           String   @default("")
+  /// none | daily | weekly
+  recurrence     String   @default("none")
+  /// Dart weekday numbers: 1=Mon ... 7=Sun (used when recurrence=weekly)
+  weekdays       Int[]    @default([])
+  taskId         String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
   attendees    MeetingAttendee[]
 
   @@index([organizationId])
   @@index([start])
+  @@index([taskId])
 }
 
 model MeetingAttendee {

@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { ExpenseStatus, TaskStatus, UserRole } from '@prisma/client';
+import { ExpenseStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
+import { getScopedUserIds } from '../common/team-scope';
 
 @Injectable()
 export class TodayService {
@@ -13,26 +14,29 @@ export class TodayService {
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
 
-    const taskWhere =
-      user.role === UserRole.MANAGER
-        ? { organizationId: user.organizationId }
-        : { organizationId: user.organizationId, assigneeId: user.id };
+    const canApprove = user.isAdmin || user.permissions.includes('expense.approve');
+    const scopedIds = await getScopedUserIds(this.prisma, user);
 
-    const meetingWhere =
-      user.role === UserRole.MANAGER
-        ? { organizationId: user.organizationId }
-        : {
-            organizationId: user.organizationId,
-            attendees: { some: { userId: user.id } },
-          };
+    const taskWhere = user.isAdmin
+      ? { organizationId: user.organizationId }
+      : { organizationId: user.organizationId, assigneeId: { in: scopedIds } };
+
+    const meetingWhere = (user.isAdmin || user.permissions.includes('meeting.view_all'))
+      ? { organizationId: user.organizationId }
+      : {
+          organizationId: user.organizationId,
+          attendees: { some: { userId: { in: scopedIds } } },
+        };
+
+    const doneStatuses = await this.prisma.orgTaskStatus.findMany({
+      where: { organizationId: user.organizationId, isDone: true },
+    });
+    const doneStatusIds = doneStatuses.map((s) => s.id);
 
     const [meetings, dueToday, overdue, pendingApprovals, myPending] =
       await Promise.all([
         this.prisma.meeting.findMany({
-          where: {
-            ...meetingWhere,
-            start: { gte: start, lt: end },
-          },
+          where: { ...meetingWhere, start: { gte: start, lt: end } },
           include: { attendees: true },
           orderBy: { start: 'asc' },
         }),
@@ -40,36 +44,33 @@ export class TodayService {
           where: {
             ...taskWhere,
             dueDate: { gte: start, lt: end },
-            status: { not: TaskStatus.DONE },
+            statusId: { notIn: doneStatusIds },
           },
-          include: {
-            checklist: true,
-            comments: true,
-          },
+          include: { checklist: true, comments: true, status: true, priority: true },
           orderBy: { dueDate: 'asc' },
         }),
         this.prisma.task.findMany({
           where: {
             ...taskWhere,
             dueDate: { lt: start },
-            status: { not: TaskStatus.DONE },
+            statusId: { notIn: doneStatusIds },
           },
-          include: {
-            checklist: true,
-            comments: true,
-          },
+          include: { checklist: true, comments: true, status: true, priority: true },
           orderBy: { dueDate: 'asc' },
         }),
-        user.role === UserRole.MANAGER
+        canApprove
           ? this.prisma.expense.findMany({
               where: {
                 organizationId: user.organizationId,
                 status: ExpenseStatus.SUBMITTED,
+                ...(user.isAdmin
+                  ? {}
+                  : { submitterId: { in: scopedIds.filter((id) => id !== user.id) } }),
               },
               orderBy: { createdAt: 'asc' },
             })
           : Promise.resolve([]),
-        user.role === UserRole.MEMBER
+        !canApprove
           ? this.prisma.expense.findMany({
               where: {
                 organizationId: user.organizationId,
@@ -84,10 +85,7 @@ export class TodayService {
       ]);
 
     const nextMeeting = await this.prisma.meeting.findFirst({
-      where: {
-        ...meetingWhere,
-        start: { gte: new Date() },
-      },
+      where: { ...meetingWhere, start: { gte: new Date() } },
       include: { attendees: true },
       orderBy: { start: 'asc' },
     });
@@ -120,42 +118,27 @@ export class TodayService {
     };
   }
 
-  private mapTask(t: {
-    id: string;
-    title: string;
-    description: string;
-    status: TaskStatus;
-    priority: string;
-    dueDate: Date | null;
-    assigneeId: string;
-    tags: string[];
-    createdAt: Date;
-    checklist: { id: string; label: string; done: boolean }[];
-    comments: {
-      id: string;
-      authorId: string;
-      body: string;
-      createdAt: Date;
-    }[];
-  }) {
-    const statusMap: Record<TaskStatus, string> = {
-      TODO: 'todo',
-      IN_PROGRESS: 'inProgress',
-      IN_REVIEW: 'inReview',
-      DONE: 'done',
-    };
+  private mapTask(t: any) {
     return {
       id: t.id,
       title: t.title,
       description: t.description,
-      status: statusMap[t.status],
-      priority: t.priority.toLowerCase(),
+      statusId: t.statusId,
+      statusName: t.status.name,
+      statusSlug: t.status.slug,
+      statusColor: t.status.color,
+      priorityId: t.priorityId,
+      priorityName: t.priority.name,
+      prioritySlug: t.priority.slug,
+      priorityColor: t.priority.color,
+      status: t.status.slug === 'in_progress' ? 'inProgress' : t.status.slug === 'in_review' ? 'inReview' : t.status.slug,
+      priority: t.priority.slug,
       dueDate: t.dueDate?.toISOString() ?? null,
       assigneeId: t.assigneeId,
       tags: t.tags,
       createdAt: t.createdAt.toISOString(),
       checklist: t.checklist,
-      comments: t.comments.map((c) => ({
+      comments: t.comments.map((c: any) => ({
         id: c.id,
         authorId: c.authorId,
         body: c.body,
@@ -164,22 +147,7 @@ export class TodayService {
     };
   }
 
-  private mapExpense(e: {
-    id: string;
-    amount: { toString(): string };
-    category: string;
-    date: Date;
-    merchant: string;
-    notes: string;
-    status: ExpenseStatus;
-    submitterId: string;
-    receiptUrl: string | null;
-    createdAt: Date;
-    decidedAt: Date | null;
-    decidedById: string | null;
-    decisionNote: string;
-    reimbursedAt: Date | null;
-  }) {
+  private mapExpense(e: any) {
     return {
       id: e.id,
       amount: Number(e.amount),

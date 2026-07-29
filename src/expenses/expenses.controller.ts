@@ -6,16 +6,18 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Roles, RolesGuard } from '../common/roles.decorator';
+import { PermissionsGuard, RequirePermissions } from '../common/roles.decorator';
 import { CurrentUser } from '../common/current-user.decorator';
 import { AuthUser } from '../auth/auth.types';
 import { ExpensesService } from './expenses.service';
 import { CreateExpenseDto, DecisionDto } from './dto/expense.dto';
 
+@ApiTags('expenses')
+@ApiBearerAuth('access-token')
 @Controller('expenses')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class ExpensesController {
   constructor(private readonly expenses: ExpensesService) {}
 
@@ -25,7 +27,7 @@ export class ExpensesController {
   }
 
   @Get('approvals/pending')
-  @Roles(UserRole.MANAGER)
+  @RequirePermissions('expense.approve')
   pending(@CurrentUser() user: AuthUser) {
     return this.expenses.pendingApprovals(user);
   }
@@ -46,7 +48,7 @@ export class ExpensesController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.MANAGER)
+  @RequirePermissions('expense.approve')
   approve(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
@@ -56,7 +58,7 @@ export class ExpensesController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.MANAGER)
+  @RequirePermissions('expense.approve')
   reject(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
@@ -66,7 +68,7 @@ export class ExpensesController {
   }
 
   @Post(':id/reimburse')
-  @Roles(UserRole.MANAGER)
+  @RequirePermissions('expense.approve')
   reimburse(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,

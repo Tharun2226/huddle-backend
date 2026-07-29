@@ -1,17 +1,20 @@
-import { UserRole } from '@prisma/client';
-
 export class AuthUser {
   id!: string;
   email!: string;
   name!: string;
   title!: string;
-  role!: UserRole;
   organizationId!: string;
+  permissions!: string[];
+  isAdmin!: boolean;
+  isSuperAdmin!: boolean;
+  roleNames!: string[];
 }
 
 export class JwtPayload {
   sub!: string;
   email!: string;
-  role!: UserRole;
   organizationId!: string;
+  permissions!: string[];
+  isAdmin!: boolean;
+  isSuperAdmin!: boolean;
 }
