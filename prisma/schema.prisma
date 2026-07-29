@@ -1,0 +1,252 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  MANAGER
+  MEMBER
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  URGENT
+  HIGH
+  NORMAL
+  LOW
+}
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REIMBURSED
+  REJECTED
+}
+
+enum ExpenseCategory {
+  MEALS
+  TRAVEL
+  ACCOMMODATION
+  SUPPLIES
+  SOFTWARE
+  CLIENT
+  OTHER
+}
+
+enum ActivityType {
+  TASK_CREATED
+  TASK_COMPLETED
+  TASK_MOVED
+  TASK_COMMENTED
+  EXPENSE_SUBMITTED
+  EXPENSE_APPROVED
+  EXPENSE_REJECTED
+  EXPENSE_REIMBURSED
+  MEETING_SCHEDULED
+}
+
+enum AuditAction {
+  EXPENSE_APPROVED
+  EXPENSE_REJECTED
+  EXPENSE_REIMBURSED
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  tasks           Task[]
+  meetings        Meeting[]
+  expenses        Expense[]
+  activityEvents  ActivityEvent[]
+  auditLogs       AuditLog[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String
+  email          String
+  name           String
+  title          String   @default("")
+  role           UserRole @default(MEMBER)
+  passwordHash   String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  assignedTasks    Task[]           @relation("TaskAssignee")
+  taskComments     TaskComment[]
+  meetingAttendees MeetingAttendee[]
+  expenses         Expense[]        @relation("ExpenseSubmitter")
+  decidedExpenses  Expense[]        @relation("ExpenseDecider")
+  activityEvents   ActivityEvent[]
+  auditLogs        AuditLog[]
+  refreshTokens    RefreshToken[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Task {
+  id             String       @id @default(cuid())
+  organizationId String
+  title          String
+  description    String       @default("")
+  status         TaskStatus   @default(TODO)
+  priority       TaskPriority @default(NORMAL)
+  dueDate        DateTime?
+  assigneeId     String
+  tags           String[]     @default([])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignee     User                @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  checklist    TaskChecklistItem[]
+  comments     TaskComment[]
+
+  @@index([organizationId])
+  @@index([assigneeId])
+  @@index([status])
+}
+
+model TaskChecklistItem {
+  id     String  @id @default(cuid())
+  taskId String
+  label  String
+  done   Boolean @default(false)
+  sortOrder Int  @default(0)
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id])
+
+  @@index([taskId])
+}
+
+model Meeting {
+  id             String   @id @default(cuid())
+  organizationId String
+  title          String
+  start          DateTime
+  end            DateTime
+  location       String   @default("")
+  notes          String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  attendees    MeetingAttendee[]
+
+  @@index([organizationId])
+  @@index([start])
+}
+
+model MeetingAttendee {
+  meetingId String
+  userId    String
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([meetingId, userId])
+}
+
+model Expense {
+  id             String          @id @default(cuid())
+  organizationId String
+  amount         Decimal         @db.Decimal(12, 2)
+  category       ExpenseCategory
+  date           DateTime
+  merchant       String
+  notes          String          @default("")
+  status         ExpenseStatus   @default(DRAFT)
+  submitterId    String
+  receiptUrl     String?
+  decidedAt      DateTime?
+  decidedById    String?
+  decisionNote   String          @default("")
+  reimbursedAt   DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  submitter    User         @relation("ExpenseSubmitter", fields: [submitterId], references: [id])
+  decidedBy    User?        @relation("ExpenseDecider", fields: [decidedById], references: [id])
+
+  @@index([organizationId])
+  @@index([submitterId])
+  @@index([status])
+}
+
+model ActivityEvent {
+  id             String       @id @default(cuid())
+  organizationId String
+  actorId        String
+  type           ActivityType
+  subject        String
+  amount         Decimal?     @db.Decimal(12, 2)
+  targetId       String?
+  at             DateTime     @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User         @relation(fields: [actorId], references: [id])
+
+  @@index([organizationId, at])
+}
+
+model AuditLog {
+  id             String      @id @default(cuid())
+  organizationId String
+  actorId        String
+  action         AuditAction
+  targetType     String
+  targetId       String
+  note           String      @default("")
+  metadata       Json?
+  createdAt      DateTime    @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User         @relation(fields: [actorId], references: [id])
+
+  @@index([organizationId, createdAt])
+}
