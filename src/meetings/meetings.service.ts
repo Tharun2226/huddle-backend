@@ -7,8 +7,9 @@ import {
 import { ActivityType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
+import { recordActivity } from '../common/activity.util';
 import { getScopedUserIds } from '../common/team-scope';
-import { CreateMeetingDto } from './dto/meeting.dto';
+import { CreateMeetingDto, UpdateMeetingDto } from './dto/meeting.dto';
 
 @Injectable()
 export class MeetingsService {
@@ -32,11 +33,16 @@ export class MeetingsService {
   async listForTask(user: AuthUser, taskId: string) {
     const task = await this.prisma.task.findFirst({
       where: { id: taskId, organizationId: user.organizationId },
+      include: { assignees: true },
     });
     if (!task) throw new NotFoundException('Task not found');
 
     const scopedIds = await getScopedUserIds(this.prisma, user);
-    if (!user.isAdmin && !scopedIds.includes(task.assigneeId)) {
+    const relatedIds = [
+      task.assigneeId,
+      ...task.assignees.map((a) => a.userId),
+    ];
+    if (!user.isAdmin && !relatedIds.some((id) => scopedIds.includes(id))) {
       throw new ForbiddenException('Not allowed to access this task');
     }
 
@@ -49,10 +55,93 @@ export class MeetingsService {
   }
 
   async create(user: AuthUser, dto: CreateMeetingDto) {
-    if (!user.isAdmin && !user.permissions.includes('meeting.create')) {
-      throw new ForbiddenException('You do not have permission to create meetings');
-    }
+    this.assertCanManageMeetings(user);
+    const prepared = await this.prepareMeetingData(user, dto);
 
+    const meeting = await this.prisma.meeting.create({
+      data: {
+        organizationId: user.organizationId,
+        title: prepared.title,
+        start: prepared.start,
+        end: prepared.end,
+        location: prepared.location,
+        notes: prepared.notes,
+        link: prepared.link,
+        recurrence: prepared.recurrence,
+        weekdays: prepared.weekdays,
+        taskId: prepared.taskId,
+        attendees: {
+          create: prepared.attendeeIds.map((userId) => ({ userId })),
+        },
+      },
+      include: { attendees: true },
+    });
+
+    await recordActivity(this.prisma, {
+      organizationId: user.organizationId,
+      actorId: user.id,
+      type: ActivityType.MEETING_SCHEDULED,
+      subject: meeting.title,
+      targetId: meeting.id,
+    });
+
+    return this.map(meeting);
+  }
+
+  async update(user: AuthUser, id: string, dto: UpdateMeetingDto) {
+    this.assertCanManageMeetings(user);
+    const existing = await this.prisma.meeting.findFirst({
+      where: { id, organizationId: user.organizationId },
+    });
+    if (!existing) throw new NotFoundException('Meeting not found');
+
+    const prepared = await this.prepareMeetingData(user, dto);
+
+    const meeting = await this.prisma.$transaction(async (tx) => {
+      await tx.meetingAttendee.deleteMany({ where: { meetingId: id } });
+      return tx.meeting.update({
+        where: { id },
+        data: {
+          title: prepared.title,
+          start: prepared.start,
+          end: prepared.end,
+          location: prepared.location,
+          notes: prepared.notes,
+          link: prepared.link,
+          recurrence: prepared.recurrence,
+          weekdays: prepared.weekdays,
+          taskId: prepared.taskId,
+          attendees: {
+            create: prepared.attendeeIds.map((userId) => ({ userId })),
+          },
+        },
+        include: { attendees: true },
+      });
+    });
+
+    return this.map(meeting);
+  }
+
+  async remove(user: AuthUser, id: string) {
+    this.assertCanManageMeetings(user);
+    const existing = await this.prisma.meeting.findFirst({
+      where: { id, organizationId: user.organizationId },
+    });
+    if (!existing) throw new NotFoundException('Meeting not found');
+
+    await this.prisma.meeting.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  private assertCanManageMeetings(user: AuthUser) {
+    if (!user.isAdmin && !user.permissions.includes('meeting.create')) {
+      throw new ForbiddenException(
+        'You do not have permission to manage meetings',
+      );
+    }
+  }
+
+  private async prepareMeetingData(user: AuthUser, dto: CreateMeetingDto) {
     const start = new Date(dto.start);
     const end = new Date(dto.end);
     if (!(end > start)) {
@@ -81,7 +170,9 @@ export class MeetingsService {
     }
     for (const id of attendeeIds) {
       if (!user.isAdmin && !scopedIds.includes(id)) {
-        throw new ForbiddenException('You can only schedule meetings for your team');
+        throw new ForbiddenException(
+          'You can only schedule meetings for your team',
+        );
       }
       const exists = await this.prisma.user.findFirst({
         where: { id, organizationId: user.organizationId },
@@ -89,36 +180,18 @@ export class MeetingsService {
       if (!exists) throw new NotFoundException(`Attendee ${id} not found`);
     }
 
-    const meeting = await this.prisma.meeting.create({
-      data: {
-        organizationId: user.organizationId,
-        title: dto.title.trim(),
-        start,
-        end,
-        location: dto.location?.trim() ?? '',
-        notes: dto.notes?.trim() ?? '',
-        link: dto.link?.trim() ?? '',
-        recurrence,
-        weekdays: recurrence === 'weekly' ? weekdays : [],
-        taskId: dto.taskId ?? null,
-        attendees: {
-          create: attendeeIds.map((userId) => ({ userId })),
-        },
-      },
-      include: { attendees: true },
-    });
-
-    await this.prisma.activityEvent.create({
-      data: {
-        organizationId: user.organizationId,
-        actorId: user.id,
-        type: ActivityType.MEETING_SCHEDULED,
-        subject: meeting.title,
-        targetId: meeting.id,
-      },
-    });
-
-    return this.map(meeting);
+    return {
+      title: dto.title.trim(),
+      start,
+      end,
+      location: dto.location?.trim() ?? '',
+      notes: dto.notes?.trim() ?? '',
+      link: dto.link?.trim() ?? '',
+      recurrence,
+      weekdays: recurrence === 'weekly' ? weekdays : ([] as number[]),
+      taskId: dto.taskId ?? null,
+      attendeeIds,
+    };
   }
 
   private map(m: {

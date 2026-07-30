@@ -181,7 +181,7 @@ export class AuthService {
   }
 
   private async getOrgConfig(organizationId: string) {
-    const [roles, taskStatuses, taskPriorities] = await Promise.all([
+    const [roles, taskStatuses, taskPriorities, taskTags] = await Promise.all([
       this.prisma.role.findMany({
         where: { organizationId },
         orderBy: { sortOrder: 'asc' },
@@ -191,6 +191,10 @@ export class AuthService {
         orderBy: { sortOrder: 'asc' },
       }),
       this.prisma.orgTaskPriority.findMany({
+        where: { organizationId, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+      this.prisma.orgTaskTag.findMany({
         where: { organizationId, isActive: true },
         orderBy: { sortOrder: 'asc' },
       }),
@@ -209,6 +213,7 @@ export class AuthService {
         name: s.name,
         slug: s.slug,
         color: s.color,
+        icon: s.icon,
         isDefault: s.isDefault,
         isDone: s.isDone,
       })),
@@ -217,7 +222,15 @@ export class AuthService {
         name: p.name,
         slug: p.slug,
         color: p.color,
+        icon: p.icon,
         isDefault: p.isDefault,
+      })),
+      taskTags: taskTags.map((t) => ({
+        id: t.id,
+        name: t.name,
+        slug: t.slug,
+        color: t.color,
+        isDefault: t.isDefault,
       })),
     };
   }

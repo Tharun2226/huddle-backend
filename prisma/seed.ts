@@ -92,6 +92,7 @@ async function wipeAll() {
   await prisma.role.deleteMany();
   await prisma.orgTaskStatus.deleteMany();
   await prisma.orgTaskPriority.deleteMany();
+  await prisma.orgTaskTag.deleteMany();
   await prisma.user.deleteMany();
   await prisma.organization.deleteMany();
 }
@@ -265,6 +266,20 @@ async function main() {
       color: '#3B82F6',
     },
   });
+
+  const defaultTags = [
+    { name: 'Frontend', slug: 'frontend', color: '#3B82F6', sortOrder: 0, isDefault: true },
+    { name: 'Backend', slug: 'backend', color: '#8B5CF6', sortOrder: 1, isDefault: false },
+    { name: 'Design', slug: 'design', color: '#EC4899', sortOrder: 2, isDefault: false },
+    { name: 'Mobile', slug: 'mobile', color: '#14B8A6', sortOrder: 3, isDefault: false },
+    { name: 'QA', slug: 'qa', color: '#F59E0B', sortOrder: 4, isDefault: false },
+    { name: 'DevOps', slug: 'devops', color: '#64748B', sortOrder: 5, isDefault: false },
+  ];
+  for (const tag of defaultTags) {
+    await prisma.orgTaskTag.create({
+      data: { organizationId: IDS.cloveOrg, ...tag },
+    });
+  }
 
   const users: Array<{
     id: string;

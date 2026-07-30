@@ -4,3 +4,9 @@ coverage
 .env
 *.log
 /generated/prisma
+uploads
+# Tesseract downloads this into cwd on first OCR run — never commit
+*.traineddata
+eng.traineddata
+tessdata/
+scripts/

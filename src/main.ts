@@ -1,10 +1,13 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.setGlobalPrefix('api');
   app.enableCors({
     origin: process.env.CORS_ORIGIN === '*' ? true : process.env.CORS_ORIGIN,
@@ -16,6 +19,13 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  // Local file storage for receipt images (swap to S3/blob later).
+  const uploadsRoot = join(process.cwd(), 'uploads');
+  if (!existsSync(uploadsRoot)) {
+    mkdirSync(uploadsRoot, { recursive: true });
+  }
+  app.useStaticAssets(uploadsRoot, { prefix: '/uploads/' });
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Huddle API')

@@ -7,6 +7,7 @@ import {
 import { ActivityType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
+import { recordActivity } from '../common/activity.util';
 import { getScopedUserIds } from '../common/team-scope';
 import {
   AddCommentDto,
@@ -127,14 +128,12 @@ export class TasksService {
       include: taskInclude,
     });
 
-    await this.prisma.activityEvent.create({
-      data: {
-        organizationId: user.organizationId,
-        actorId: user.id,
-        type: ActivityType.TASK_CREATED,
-        subject: task.title,
-        targetId: task.id,
-      },
+    await recordActivity(this.prisma, {
+      organizationId: user.organizationId,
+      actorId: user.id,
+      type: ActivityType.TASK_CREATED,
+      subject: task.title,
+      targetId: task.id,
     });
 
     return this.mapTask(task);
@@ -200,18 +199,30 @@ export class TasksService {
       const type = newStatus?.isDone
         ? ActivityType.TASK_COMPLETED
         : ActivityType.TASK_MOVED;
-      await this.prisma.activityEvent.create({
-        data: {
-          organizationId: user.organizationId,
-          actorId: user.id,
-          type,
-          subject: task.title,
-          targetId: task.id,
-        },
+      await recordActivity(this.prisma, {
+        organizationId: user.organizationId,
+        actorId: user.id,
+        type,
+        subject: task.title,
+        targetId: task.id,
       });
     }
 
     return this.mapTask(task);
+  }
+
+  async remove(user: AuthUser, id: string) {
+    const existing = await this.findScoped(user, id);
+    const canManage =
+      user.isAdmin ||
+      user.permissions.includes('task.assign') ||
+      existing.assigneeId === user.id ||
+      this.assigneeIdsOf(existing).includes(user.id);
+    if (!canManage) {
+      throw new ForbiddenException('Not allowed to delete this task');
+    }
+    await this.prisma.task.delete({ where: { id } });
+    return { ok: true };
   }
 
   async addComment(user: AuthUser, id: string, dto: AddCommentDto) {
@@ -224,14 +235,12 @@ export class TasksService {
       },
     });
     const task = await this.findScoped(user, id);
-    await this.prisma.activityEvent.create({
-      data: {
-        organizationId: user.organizationId,
-        actorId: user.id,
-        type: ActivityType.TASK_COMMENTED,
-        subject: task.title,
-        targetId: task.id,
-      },
+    await recordActivity(this.prisma, {
+      organizationId: user.organizationId,
+      actorId: user.id,
+      type: ActivityType.TASK_COMMENTED,
+      subject: task.title,
+      targetId: task.id,
     });
     return this.mapTask(task);
   }
@@ -336,6 +345,8 @@ export class TasksService {
   }
 
   private mapTask(task: any) {
+    const status = task.status ?? {};
+    const priority = task.priority ?? {};
     const fromJoin: { id: string; name: string }[] = (
       task.assignees ?? []
     ).map((a: any) => ({
@@ -353,38 +364,39 @@ export class TasksService {
           )
         : [task.assignee?.name ?? ''];
 
+    const statusSlug = status.slug ?? 'todo';
     return {
       id: task.id,
       title: task.title,
       description: task.description,
       statusId: task.statusId,
-      statusName: task.status.name,
-      statusSlug: task.status.slug,
-      statusColor: task.status.color,
+      statusName: status.name ?? statusSlug,
+      statusSlug,
+      statusColor: status.color ?? '#94A3B8',
       priorityId: task.priorityId,
-      priorityName: task.priority.name,
-      prioritySlug: task.priority.slug,
-      priorityColor: task.priority.color,
+      priorityName: priority.name ?? priority.slug ?? 'normal',
+      prioritySlug: priority.slug ?? 'normal',
+      priorityColor: priority.color ?? '#94A3B8',
       status:
-        task.status.slug === 'in_progress'
+        statusSlug === 'in_progress'
           ? 'inProgress'
-          : task.status.slug === 'in_review'
+          : statusSlug === 'in_review'
             ? 'inReview'
-            : task.status.slug,
-      priority: task.priority.slug,
+            : statusSlug,
+      priority: priority.slug ?? 'normal',
       dueDate: task.dueDate?.toISOString() ?? null,
       assigneeId: task.assigneeId,
       assigneeName: task.assignee?.name ?? null,
       assigneeIds,
       assigneeNames,
-      tags: task.tags,
+      tags: task.tags ?? [],
       createdAt: task.createdAt.toISOString(),
-      checklist: task.checklist.map((c: any) => ({
+      checklist: (task.checklist ?? []).map((c: any) => ({
         id: c.id,
         label: c.label,
         done: c.done,
       })),
-      comments: task.comments.map((c: any) => ({
+      comments: (task.comments ?? []).map((c: any) => ({
         id: c.id,
         authorId: c.authorId,
         authorName: c.author?.name ?? null,

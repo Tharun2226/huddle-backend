@@ -18,9 +18,11 @@ import {
   CreateRoleDto,
   CreateTaskPriorityDto,
   CreateTaskStatusDto,
+  CreateTaskTagDto,
   UpdateRoleDto,
   UpdateTaskPriorityDto,
   UpdateTaskStatusDto,
+  UpdateTaskTagDto,
 } from './dto/admin.dto';
 import { UpdateOrgDto } from './dto/org.dto';
 
@@ -133,6 +135,36 @@ export class AdminController {
   @RequirePermissions('org.settings')
   deleteTaskPriority(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.admin.deleteTaskPriority(user, id);
+  }
+
+  // --- Task Tags ---
+
+  @Get('task-tags')
+  @RequirePermissions('org.settings')
+  listTaskTags(@CurrentUser() user: AuthUser) {
+    return this.admin.listTaskTags(user);
+  }
+
+  @Post('task-tags')
+  @RequirePermissions('org.settings')
+  createTaskTag(@CurrentUser() user: AuthUser, @Body() dto: CreateTaskTagDto) {
+    return this.admin.createTaskTag(user, dto);
+  }
+
+  @Patch('task-tags/:id')
+  @RequirePermissions('org.settings')
+  updateTaskTag(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateTaskTagDto,
+  ) {
+    return this.admin.updateTaskTag(user, id, dto);
+  }
+
+  @Delete('task-tags/:id')
+  @RequirePermissions('org.settings')
+  deleteTaskTag(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.admin.deleteTaskTag(user, id);
   }
 
   // --- Permissions ---

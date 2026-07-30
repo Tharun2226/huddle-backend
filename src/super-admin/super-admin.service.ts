@@ -17,17 +17,26 @@ const MANAGER_PERMISSIONS = [
 ];
 
 const DEFAULT_TASK_STATUSES = [
-  { name: 'To Do', slug: 'todo', sortOrder: 0, isDefault: true, isDone: false, color: '#6B7280' },
-  { name: 'In Progress', slug: 'in_progress', sortOrder: 1, isDefault: false, isDone: false, color: '#3B82F6' },
-  { name: 'In Review', slug: 'in_review', sortOrder: 2, isDefault: false, isDone: false, color: '#F59E0B' },
-  { name: 'Done', slug: 'done', sortOrder: 3, isDefault: false, isDone: true, color: '#10B981' },
+  { name: 'To Do', slug: 'todo', sortOrder: 0, isDefault: true, isDone: false, color: '#6B7280', icon: 'circle_outlined' },
+  { name: 'In Progress', slug: 'in_progress', sortOrder: 1, isDefault: false, isDone: false, color: '#3B82F6', icon: 'timelapse' },
+  { name: 'In Review', slug: 'in_review', sortOrder: 2, isDefault: false, isDone: false, color: '#F59E0B', icon: 'visibility' },
+  { name: 'Done', slug: 'done', sortOrder: 3, isDefault: false, isDone: true, color: '#10B981', icon: 'check_circle' },
 ];
 
 const DEFAULT_TASK_PRIORITIES = [
-  { name: 'Urgent', slug: 'urgent', sortOrder: 0, isDefault: false, color: '#EF4444' },
-  { name: 'High', slug: 'high', sortOrder: 1, isDefault: false, color: '#F59E0B' },
-  { name: 'Normal', slug: 'normal', sortOrder: 2, isDefault: true, color: '#6B7280' },
-  { name: 'Low', slug: 'low', sortOrder: 3, isDefault: false, color: '#3B82F6' },
+  { name: 'Urgent', slug: 'urgent', sortOrder: 0, isDefault: false, color: '#EF4444', icon: 'bolt' },
+  { name: 'High', slug: 'high', sortOrder: 1, isDefault: false, color: '#F59E0B', icon: 'arrow_upward' },
+  { name: 'Normal', slug: 'normal', sortOrder: 2, isDefault: true, color: '#6B7280', icon: 'remove' },
+  { name: 'Low', slug: 'low', sortOrder: 3, isDefault: false, color: '#3B82F6', icon: 'arrow_downward' },
+];
+
+const DEFAULT_TASK_TAGS = [
+  { name: 'Frontend', slug: 'frontend', sortOrder: 0, isDefault: true, color: '#3B82F6' },
+  { name: 'Backend', slug: 'backend', sortOrder: 1, isDefault: false, color: '#8B5CF6' },
+  { name: 'Design', slug: 'design', sortOrder: 2, isDefault: false, color: '#EC4899' },
+  { name: 'Mobile', slug: 'mobile', sortOrder: 3, isDefault: false, color: '#14B8A6' },
+  { name: 'QA', slug: 'qa', sortOrder: 4, isDefault: false, color: '#F59E0B' },
+  { name: 'DevOps', slug: 'devops', sortOrder: 5, isDefault: false, color: '#64748B' },
 ];
 
 @Injectable()
@@ -90,6 +99,9 @@ export class SuperAdminService {
       }
       for (const p of DEFAULT_TASK_PRIORITIES) {
         await tx.orgTaskPriority.create({ data: { organizationId: org.id, ...p } });
+      }
+      for (const t of DEFAULT_TASK_TAGS) {
+        await tx.orgTaskTag.create({ data: { organizationId: org.id, ...t } });
       }
 
       // Admin user

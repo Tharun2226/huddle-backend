@@ -65,7 +65,7 @@ export class TodayService {
                 status: ExpenseStatus.SUBMITTED,
                 ...(user.isAdmin
                   ? {}
-                  : { submitterId: { in: scopedIds.filter((id) => id !== user.id) } }),
+                  : { submitterId: { in: scopedIds } }),
               },
               orderBy: { createdAt: 'asc' },
             })

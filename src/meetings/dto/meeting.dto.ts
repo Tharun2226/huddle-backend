@@ -76,3 +76,6 @@ export class CreateMeetingDto {
   @IsString()
   taskId?: string;
 }
+
+/** Full replace of editable meeting fields (same shape as create). */
+export class UpdateMeetingDto extends CreateMeetingDto {}

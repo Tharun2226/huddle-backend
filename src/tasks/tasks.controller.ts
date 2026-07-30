@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -49,6 +50,11 @@ export class TasksController {
     @Body() dto: UpdateTaskDto,
   ) {
     return this.tasks.update(user, id, dto);
+  }
+
+  @Delete(':id')
+  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.tasks.remove(user, id);
   }
 
   @Post(':id/comments')

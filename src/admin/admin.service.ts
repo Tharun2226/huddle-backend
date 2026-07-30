@@ -9,14 +9,57 @@ import {
   CreateRoleDto,
   CreateTaskPriorityDto,
   CreateTaskStatusDto,
+  CreateTaskTagDto,
   UpdateRoleDto,
   UpdateTaskPriorityDto,
   UpdateTaskStatusDto,
+  UpdateTaskTagDto,
 } from './dto/admin.dto';
 
 @Injectable()
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private slugify(name: string) {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  private async clearDefaultStatus(organizationId: string, exceptId?: string) {
+    await this.prisma.orgTaskStatus.updateMany({
+      where: {
+        organizationId,
+        isDefault: true,
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+      data: { isDefault: false },
+    });
+  }
+
+  private async clearDefaultPriority(organizationId: string, exceptId?: string) {
+    await this.prisma.orgTaskPriority.updateMany({
+      where: {
+        organizationId,
+        isDefault: true,
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+      data: { isDefault: false },
+    });
+  }
+
+  private async clearDefaultTag(organizationId: string, exceptId?: string) {
+    await this.prisma.orgTaskTag.updateMany({
+      where: {
+        organizationId,
+        isDefault: true,
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+      data: { isDefault: false },
+    });
+  }
 
   // --- Organization ---
 
@@ -152,11 +195,10 @@ export class AdminService {
   }
 
   async createTaskStatus(user: AuthUser, dto: CreateTaskStatusDto) {
-    const slug = dto.name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
+    const slug = this.slugify(dto.name);
+    if (dto.isDefault) {
+      await this.clearDefaultStatus(user.organizationId);
+    }
 
     return this.prisma.orgTaskStatus.create({
       data: {
@@ -164,6 +206,7 @@ export class AdminService {
         name: dto.name.trim(),
         slug,
         color: dto.color ?? '#6B7280',
+        icon: dto.icon ?? 'circle_outlined',
         sortOrder: dto.sortOrder ?? 0,
         isDefault: dto.isDefault ?? false,
         isDone: dto.isDone ?? false,
@@ -177,15 +220,18 @@ export class AdminService {
     });
     if (!status) throw new NotFoundException('Task status not found');
 
-    const slug = dto.name
-      ? dto.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-      : undefined;
+    if (dto.isDefault === true) {
+      await this.clearDefaultStatus(user.organizationId, id);
+    }
+
+    const slug = dto.name ? this.slugify(dto.name) : undefined;
 
     return this.prisma.orgTaskStatus.update({
       where: { id },
       data: {
         ...(dto.name ? { name: dto.name.trim(), slug } : {}),
         ...(dto.color ? { color: dto.color } : {}),
+        ...(dto.icon ? { icon: dto.icon } : {}),
         ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         ...(dto.isDefault !== undefined ? { isDefault: dto.isDefault } : {}),
         ...(dto.isDone !== undefined ? { isDone: dto.isDone } : {}),
@@ -216,11 +262,10 @@ export class AdminService {
   }
 
   async createTaskPriority(user: AuthUser, dto: CreateTaskPriorityDto) {
-    const slug = dto.name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
+    const slug = this.slugify(dto.name);
+    if (dto.isDefault) {
+      await this.clearDefaultPriority(user.organizationId);
+    }
 
     return this.prisma.orgTaskPriority.create({
       data: {
@@ -228,6 +273,7 @@ export class AdminService {
         name: dto.name.trim(),
         slug,
         color: dto.color ?? '#6B7280',
+        icon: dto.icon ?? 'remove',
         sortOrder: dto.sortOrder ?? 0,
         isDefault: dto.isDefault ?? false,
       },
@@ -240,15 +286,18 @@ export class AdminService {
     });
     if (!priority) throw new NotFoundException('Task priority not found');
 
-    const slug = dto.name
-      ? dto.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-      : undefined;
+    if (dto.isDefault === true) {
+      await this.clearDefaultPriority(user.organizationId, id);
+    }
+
+    const slug = dto.name ? this.slugify(dto.name) : undefined;
 
     return this.prisma.orgTaskPriority.update({
       where: { id },
       data: {
         ...(dto.name ? { name: dto.name.trim(), slug } : {}),
         ...(dto.color ? { color: dto.color } : {}),
+        ...(dto.icon ? { icon: dto.icon } : {}),
         ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         ...(dto.isDefault !== undefined ? { isDefault: dto.isDefault } : {}),
       },
@@ -262,6 +311,69 @@ export class AdminService {
     if (!priority) throw new NotFoundException('Task priority not found');
 
     await this.prisma.orgTaskPriority.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    return { ok: true };
+  }
+
+  // --- Task Tags ---
+
+  async listTaskTags(user: AuthUser) {
+    return this.prisma.orgTaskTag.findMany({
+      where: { organizationId: user.organizationId, isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  async createTaskTag(user: AuthUser, dto: CreateTaskTagDto) {
+    const slug = this.slugify(dto.name);
+    if (dto.isDefault) {
+      await this.clearDefaultTag(user.organizationId);
+    }
+
+    return this.prisma.orgTaskTag.create({
+      data: {
+        organizationId: user.organizationId,
+        name: dto.name.trim(),
+        slug,
+        color: dto.color ?? '#6B7280',
+        sortOrder: dto.sortOrder ?? 0,
+        isDefault: dto.isDefault ?? false,
+      },
+    });
+  }
+
+  async updateTaskTag(user: AuthUser, id: string, dto: UpdateTaskTagDto) {
+    const tag = await this.prisma.orgTaskTag.findFirst({
+      where: { id, organizationId: user.organizationId },
+    });
+    if (!tag) throw new NotFoundException('Task tag not found');
+
+    if (dto.isDefault === true) {
+      await this.clearDefaultTag(user.organizationId, id);
+    }
+
+    const slug = dto.name ? this.slugify(dto.name) : undefined;
+
+    return this.prisma.orgTaskTag.update({
+      where: { id },
+      data: {
+        ...(dto.name ? { name: dto.name.trim(), slug } : {}),
+        ...(dto.color ? { color: dto.color } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.isDefault !== undefined ? { isDefault: dto.isDefault } : {}),
+      },
+    });
+  }
+
+  async deleteTaskTag(user: AuthUser, id: string) {
+    const tag = await this.prisma.orgTaskTag.findFirst({
+      where: { id, organizationId: user.organizationId },
+    });
+    if (!tag) throw new NotFoundException('Task tag not found');
+
+    await this.prisma.orgTaskTag.update({
       where: { id },
       data: { isActive: false },
     });

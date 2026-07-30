@@ -58,6 +58,11 @@ export class CreateTaskStatusDto {
   @IsString()
   color?: string;
 
+  @ApiPropertyOptional({ example: 'flag' })
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
@@ -88,6 +93,11 @@ export class UpdateTaskStatusDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsInt()
   sortOrder?: number;
 
@@ -113,6 +123,11 @@ export class CreateTaskPriorityDto {
   @IsString()
   color?: string;
 
+  @ApiPropertyOptional({ example: 'bolt' })
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
@@ -125,6 +140,56 @@ export class CreateTaskPriorityDto {
 }
 
 export class UpdateTaskPriorityDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  color?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isDefault?: boolean;
+}
+
+export class CreateTaskTagDto {
+  @ApiProperty({ example: 'Frontend' })
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @ApiPropertyOptional({ example: '#3B82F6' })
+  @IsOptional()
+  @IsString()
+  color?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isDefault?: boolean;
+}
+
+export class UpdateTaskTagDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

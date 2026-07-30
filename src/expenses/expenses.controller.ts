@@ -1,12 +1,19 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  MaxFileSizeValidator,
   Param,
+  ParseFilePipe,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../common/roles.decorator';
 import { CurrentUser } from '../common/current-user.decorator';
@@ -32,6 +39,60 @@ export class ExpensesController {
     return this.expenses.pendingApprovals(user);
   }
 
+  @Post('receipt')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+    }),
+  )
+  uploadReceipt(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile(
+      new ParseFilePipe({
+        fileIsRequired: true,
+        validators: [new MaxFileSizeValidator({ maxSize: 8 * 1024 * 1024 })],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.expenses.saveReceiptFile(file, user);
+  }
+
+  @Post('scan')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+    }),
+  )
+  scanReceipt(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile(
+      new ParseFilePipe({
+        fileIsRequired: true,
+        validators: [new MaxFileSizeValidator({ maxSize: 8 * 1024 * 1024 })],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.expenses.scanReceipt(file, user);
+  }
+
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.expenses.get(user, id);
@@ -40,6 +101,11 @@ export class ExpensesController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateExpenseDto) {
     return this.expenses.create(user, dto);
+  }
+
+  @Delete(':id')
+  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.expenses.remove(user, id);
   }
 
   @Post(':id/submit')

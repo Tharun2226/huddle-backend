@@ -60,6 +60,7 @@ model Organization {
   roles           Role[]
   taskStatuses    OrgTaskStatus[]
   taskPriorities  OrgTaskPriority[]
+  taskTags        OrgTaskTag[]
 }
 
 model Role {
@@ -115,6 +116,8 @@ model OrgTaskStatus {
   name           String
   slug           String
   color          String   @default("#6B7280")
+  /// Catalog icon key, e.g. "check_circle", "flag"
+  icon           String   @default("circle_outlined")
   sortOrder      Int      @default(0)
   isDefault      Boolean  @default(false)
   isDone         Boolean  @default(false)
@@ -134,6 +137,8 @@ model OrgTaskPriority {
   name           String
   slug           String
   color          String   @default("#6B7280")
+  /// Catalog icon key, e.g. "bolt", "arrow_upward"
+  icon           String   @default("remove")
   sortOrder      Int      @default(0)
   isDefault      Boolean  @default(false)
   isActive       Boolean  @default(true)
@@ -141,6 +146,23 @@ model OrgTaskPriority {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   tasks        Task[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model OrgTaskTag {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  color          String   @default("#6B7280")
+  sortOrder      Int      @default(0)
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, slug])
   @@index([organizationId])
