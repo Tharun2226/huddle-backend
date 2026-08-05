@@ -6,9 +6,9 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
 import { AppModule } from '../src/app.module';
 import { ClientSafeExceptionFilter } from '../src/common/client-safe-exception.filter';
+import { uploadsRoot } from '../src/common/uploads-path';
 
 let cachedServer: Express | null = null;
 
@@ -35,11 +35,11 @@ async function bootstrapServer(): Promise<Express> {
   );
   app.useGlobalFilters(new ClientSafeExceptionFilter());
 
-  const uploadsRoot = join('/tmp', 'huddle-uploads');
-  if (!existsSync(uploadsRoot)) {
-    mkdirSync(uploadsRoot, { recursive: true });
+  const root = uploadsRoot();
+  if (!existsSync(root)) {
+    mkdirSync(root, { recursive: true });
   }
-  app.useStaticAssets(uploadsRoot, { prefix: '/uploads/' });
+  app.useStaticAssets(root, { prefix: '/uploads/' });
 
   if (process.env.ENABLE_SWAGGER !== 'false') {
     const swaggerConfig = new DocumentBuilder()
