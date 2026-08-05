@@ -8,6 +8,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { AppModule } from '../src/app.module';
+import { ClientSafeExceptionFilter } from '../src/common/client-safe-exception.filter';
 
 let cachedServer: Express | null = null;
 
@@ -32,6 +33,7 @@ async function bootstrapServer(): Promise<Express> {
       forbidNonWhitelisted: true,
     }),
   );
+  app.useGlobalFilters(new ClientSafeExceptionFilter());
 
   const uploadsRoot = join('/tmp', 'huddle-uploads');
   if (!existsSync(uploadsRoot)) {

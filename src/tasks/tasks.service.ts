@@ -8,6 +8,7 @@ import { ActivityType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
 import { recordActivity } from '../common/activity.util';
+import { PRISMA_TX } from '../common/prisma-tx';
 import { getScopedUserIds } from '../common/team-scope';
 import {
   AddCommentDto,
@@ -190,7 +191,7 @@ export class TasksService {
         },
         include: taskInclude,
       });
-    });
+    }, { ...PRISMA_TX });
 
     if (dto.statusId && dto.statusId !== prevStatusId) {
       const newStatus = await this.prisma.orgTaskStatus.findUnique({
