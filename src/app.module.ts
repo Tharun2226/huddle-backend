@@ -10,6 +10,7 @@ import { ActivityModule } from './activity/activity.module';
 import { TodayModule } from './today/today.module';
 import { AdminModule } from './admin/admin.module';
 import { SuperAdminModule } from './super-admin/super-admin.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -25,6 +26,7 @@ import { HealthController } from './health.controller';
     TodayModule,
     AdminModule,
     SuperAdminModule,
+    NotificationsModule,
   ],
   controllers: [HealthController],
 })

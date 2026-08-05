@@ -19,9 +19,15 @@ export class TodayService {
 
     const taskWhere = user.isAdmin
       ? { organizationId: user.organizationId }
-      : { organizationId: user.organizationId, assigneeId: { in: scopedIds } };
+      : {
+          organizationId: user.organizationId,
+          OR: [
+            { assigneeId: { in: scopedIds } },
+            { assignees: { some: { userId: { in: scopedIds } } } },
+          ],
+        };
 
-    const meetingWhere = (user.isAdmin || user.permissions.includes('meeting.view_all'))
+    const meetingWhere = user.isAdmin
       ? { organizationId: user.organizationId }
       : {
           organizationId: user.organizationId,
@@ -99,6 +105,9 @@ export class TodayService {
             end: nextMeeting.end.toISOString(),
             location: nextMeeting.location,
             notes: nextMeeting.notes,
+            link: nextMeeting.link ?? '',
+            isOnline: nextMeeting.isOnline !== false,
+            externalAttendees: nextMeeting.externalAttendees ?? [],
             attendeeIds: nextMeeting.attendees.map((a) => a.userId),
           }
         : null,
@@ -109,6 +118,9 @@ export class TodayService {
         end: m.end.toISOString(),
         location: m.location,
         notes: m.notes,
+        link: m.link ?? '',
+        isOnline: m.isOnline !== false,
+        externalAttendees: m.externalAttendees ?? [],
         attendeeIds: m.attendees.map((a) => a.userId),
       })),
       dueToday: dueToday.map((t) => this.mapTask(t)),

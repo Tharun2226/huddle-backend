@@ -1,8 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
+  IsEmail,
   IsIn,
   IsInt,
   IsOptional,
@@ -10,7 +13,20 @@ import {
   Max,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+
+export class ExternalAttendeeDto {
+  @ApiProperty({ example: 'Alex Guest' })
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @ApiPropertyOptional({ example: 'alex@example.com' })
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+}
 
 export class CreateMeetingDto {
   @ApiProperty({ example: 'Weekly sync' })
@@ -26,11 +42,25 @@ export class CreateMeetingDto {
   @IsDateString()
   end!: string;
 
-  @ApiProperty({ type: [String] })
+  @ApiProperty({ type: [String], description: 'Org user IDs (organizer always included)' })
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
   attendeeIds!: string[];
+
+  @ApiPropertyOptional({ type: [ExternalAttendeeDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ExternalAttendeeDto)
+  externalAttendees?: ExternalAttendeeDto[];
+
+  @ApiPropertyOptional({
+    description: 'true = online meeting (join link); false = in person',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isOnline?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -39,13 +69,13 @@ export class CreateMeetingDto {
 
   @ApiPropertyOptional({
     example: 'https://meet.google.com/abc-defg-hij',
-    description: 'Join / redirect URL',
+    description: 'Join URL — used when isOnline is true',
   })
   @IsOptional()
   @IsString()
   link?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Agenda / description' })
   @IsOptional()
   @IsString()
   notes?: string;

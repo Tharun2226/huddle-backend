@@ -8,6 +8,7 @@ import {
   ActivityType,
   AuditAction,
   ExpenseStatus,
+  NotificationType,
 } from '@prisma/client';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { extname, join } from 'path';
@@ -18,12 +19,14 @@ import { recordActivity } from '../common/activity.util';
 import { getScopedUserIds } from '../common/team-scope';
 import { CreateExpenseDto, DecisionDto } from './dto/expense.dto';
 import { ReceiptOcrService } from './receipt-ocr.service';
+import { NotificationService } from '../notifications/notification.service';
 
 @Injectable()
 export class ExpensesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly receiptOcr: ReceiptOcrService,
+    private readonly notifications: NotificationService,
   ) {}
 
   /** Save a receipt image under uploads/receipts (local disk for now). */
@@ -154,6 +157,7 @@ export class ExpensesService {
         amount: expense.amount,
         targetId: expense.id,
       });
+      await this.notifyExpenseSubmitted(user, expense);
     }
 
     return this.map(expense);
@@ -184,6 +188,7 @@ export class ExpensesService {
       amount: updated.amount,
       targetId: updated.id,
     });
+    await this.notifyExpenseSubmitted(user, updated);
     return this.map(updated);
   }
 
@@ -262,6 +267,14 @@ export class ExpensesService {
       amount: updated.amount,
       targetId: updated.id,
     });
+    await this.notifications.notifyUser({
+      userId: updated.submitterId,
+      organizationId: user.organizationId,
+      title: 'Expense reimbursed',
+      body: `${updated.merchant} (₹${Number(updated.amount).toFixed(0)}) was marked reimbursed.`,
+      type: NotificationType.SYSTEM_ALERT,
+      referenceId: updated.id,
+    });
     return this.map(updated);
   }
 
@@ -311,7 +324,76 @@ export class ExpensesService {
       amount: updated.amount,
       targetId: updated.id,
     });
+
+    const approved = status === ExpenseStatus.APPROVED;
+    await this.notifications.notifyUser({
+      userId: updated.submitterId,
+      organizationId: user.organizationId,
+      title: approved ? 'Expense approved' : 'Expense rejected',
+      body: approved
+        ? `${updated.merchant} (₹${Number(updated.amount).toFixed(0)}) was approved.`
+        : `${updated.merchant} (₹${Number(updated.amount).toFixed(0)}) was rejected${note ? `: ${note}` : '.'}`,
+      type: approved
+        ? NotificationType.EXPENSE_APPROVED
+        : NotificationType.EXPENSE_REJECTED,
+      referenceId: updated.id,
+    });
+
     return this.map(updated);
+  }
+
+  private async notifyExpenseSubmitted(
+    actor: AuthUser,
+    expense: { id: string; merchant: string; amount: unknown; submitterId: string },
+  ) {
+    const recipients = await this.approverUserIds(
+      actor.organizationId,
+      expense.submitterId,
+    );
+    await this.notifications.notifyUsers(recipients, {
+      organizationId: actor.organizationId,
+      title: 'Expense submitted',
+      body: `${actor.name} submitted ${expense.merchant} (₹${Number(expense.amount).toFixed(0)}) for approval.`,
+      type: NotificationType.EXPENSE_SUBMITTED,
+      referenceId: expense.id,
+    });
+  }
+
+  /** Manager of submitter + org users with expense.approve / admin role. */
+  private async approverUserIds(
+    organizationId: string,
+    submitterId: string,
+  ): Promise<string[]> {
+    const ids = new Set<string>();
+    const submitter = await this.prisma.user.findUnique({
+      where: { id: submitterId },
+      select: { managerId: true },
+    });
+    if (submitter?.managerId) ids.add(submitter.managerId);
+
+    const approvers = await this.prisma.user.findMany({
+      where: {
+        organizationId,
+        id: { not: submitterId },
+        roles: {
+          some: {
+            role: {
+              OR: [
+                { isAdmin: true },
+                {
+                  permissions: {
+                    some: { permission: { code: 'expense.approve' } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    for (const row of approvers) ids.add(row.id);
+    return [...ids];
   }
 
   private async findScoped(user: AuthUser, id: string, ownOnly = false) {

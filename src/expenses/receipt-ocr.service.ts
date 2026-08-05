@@ -27,10 +27,11 @@ function receiptSignal(text: string, confidence: number): number {
     [/\binvoice\b/i, 12],
     [/\btotal\b/i, 15],
     [/\brate\b/i, 6],
-    [/\b(inr|rs\.?|₹)\b/i, 10],
+    [/(?:₹|rs\.?|\binr\b|¥|R)\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?/i, 45],
+    [/\brupees?\s+[a-z]/i, 40],
+    [/\b(upi|paytm|phonepe|paid\s*to|money\s*sent|utr|completed|pay\s*again|g\s*pay|google\s*pay)\b/i, 20],
     [/\b\d{1,2}[-/\s]+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i, 18],
     [/\d+\.\d{2}\b/, 8],
-    [/\b(upi|paytm|phonepe|paid\s*to|money\s*sent|utr)\b/i, 20],
   ];
   for (const [re, pts] of checks) {
     if (re.test(text)) score += pts;
@@ -44,6 +45,14 @@ function receiptSignal(text: string, confidence: number): number {
     score += 35;
   }
   if (text.replace(/\s/g, '').length < 40) score -= 40;
+  // Prefer OCR passes that captured both money and a date (UPI slips)
+  const hasMoney =
+    /(?:₹|rs\.?|¥|R)\s*\d{2,}/i.test(text) || /\brupees?\s+[a-z]/i.test(text);
+  const hasDate =
+    /\b\d{1,2}[-/\s,]+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(
+      text,
+    );
+  if (hasMoney && hasDate) score += 30;
   return score;
 }
 
@@ -151,7 +160,40 @@ export class ReceiptOcrService {
           .toBuffer(),
       );
 
+      // Dark UIs (GPay): invert so white ₹ amount becomes dark on white
+      variants.push(
+        await sharp(buffer)
+          .rotate()
+          .resize({ width: targetWidth, fit: 'inside' })
+          .grayscale()
+          .negate({ alpha: false })
+          .normalize()
+          .linear(1.35, -20)
+          .png()
+          .toBuffer(),
+      );
+
+      // Upper band where UPI hero amount usually sits
       if (width > 200 && height > 200) {
+        const topH = Math.round(height * 0.55);
+        variants.push(
+          await sharp(buffer)
+            .rotate()
+            .extract({
+              left: 0,
+              top: 0,
+              width,
+              height: Math.max(120, topH),
+            })
+            .resize({ width: Math.min(1800, Math.max(width, 1200)) })
+            .grayscale()
+            .negate({ alpha: false })
+            .normalize()
+            .sharpen({ sigma: 1.2 })
+            .png()
+            .toBuffer(),
+        );
+
         const left = Math.round(width * 0.1);
         const top = Math.round(height * 0.06);
         const cropW = Math.round(width * 0.8);
@@ -224,11 +266,13 @@ export class ReceiptOcrService {
       null;
 
     const attempts: Array<{ buf: Buffer; psm: PSM }> = [];
-    if (variants[1]) attempts.push({ buf: variants[1], psm: PSM.SINGLE_COLUMN });
-    if (variants[1]) attempts.push({ buf: variants[1], psm: PSM.SINGLE_BLOCK });
-    attempts.push({ buf: variants[0], psm: PSM.SINGLE_COLUMN });
-    attempts.push({ buf: variants[0], psm: PSM.SINGLE_BLOCK });
-    if (variants[2]) attempts.push({ buf: variants[2], psm: PSM.SINGLE_BLOCK });
+    // Prefer sparse text first — catches GPay "R450" that block mode misses
+    if (variants[1]) attempts.push({ buf: variants[1], psm: PSM.SPARSE_TEXT });
+    if (variants[2]) attempts.push({ buf: variants[2], psm: PSM.SPARSE_TEXT });
+    if (variants[0]) attempts.push({ buf: variants[0], psm: PSM.SPARSE_TEXT });
+    for (const v of variants) {
+      attempts.push({ buf: v, psm: PSM.SINGLE_BLOCK });
+    }
 
     for (const attempt of attempts) {
       try {
@@ -236,6 +280,14 @@ export class ReceiptOcrService {
         const signal = receiptSignal(result.text, result.confidence);
         if (!best || signal > best.signal) {
           best = { ...result, signal };
+        }
+        // Strong UPI amount hit — stop early
+        if (
+          (/(?:₹|rs\.?|¥|R)\s*\d{2,}/i.test(result.text) ||
+            /\brupees?\s+[a-z]+/i.test(result.text)) &&
+          result.confidence >= 35
+        ) {
+          break;
         }
         if (
           /\bamount\b/i.test(result.text) &&

@@ -149,73 +149,91 @@ export class ReceiptParserService {
     const subtotal = this.extractSubtotal(lines);
     const hasFinalLabel = lines.some((l) => FINAL_TOTAL_PATTERN.test(l));
 
-    for (const line of lines) {
-      // Tax IDs / phones / txn numbers are never the payable amount
+    const pushCandidate = (
+      raw: string,
+      line: string,
+      scoreBoost = 0,
+    ): void => {
+      let value = this.toMoney(raw);
+      if (value == null) return;
+      value = this.dropRupeeGhostTwo(value, subtotal);
+
+      const hasDecimals = /\.\d{1,2}$/.test(raw.replace(/,/g, ''));
+      const isFinal = FINAL_TOTAL_PATTERN.test(line);
+      const isPretax = PRETAX_TOTAL_PATTERN.test(line);
+      let score = 1 + scoreBoost;
+
+      if (isFinal) score += 18;
+      else if (TOTAL_KEYWORD_PATTERN.test(line) && !isPretax) score += 6;
+      if (AMOUNT_LABEL_PATTERN.test(line) && !isPretax) score += 10;
+      if (/grand/i.test(line)) score += 2;
+      if (isPretax) score -= hasFinalLabel ? 12 : 4;
+      if (UNIT_PRICE_PATTERN.test(line)) score -= 12;
+      if (FUEL_META_PATTERN.test(line)) score -= 10;
+      if (NON_TOTAL_PATTERN.test(line) || TAX_KEYWORD_PATTERN.test(line)) {
+        score -= 4;
+      }
+
+      const hasCurrency = /(?:₹|rs\.?|inr|\$|€|£)/i.test(line);
+      if (hasCurrency) score += 10;
+
+      if (hasDecimals) score += 4;
+      else {
+        if (
+          !isFinal &&
+          !AMOUNT_LABEL_PATTERN.test(line) &&
+          !TOTAL_KEYWORD_PATTERN.test(line) &&
+          !hasCurrency &&
+          scoreBoost < 10
+        ) {
+          return;
+        }
+        score -= hasCurrency ? 2 : 6;
+      }
+
+      if (
+        value >= 50_000 &&
+        !isFinal &&
+        !AMOUNT_LABEL_PATTERN.test(line) &&
+        !hasCurrency
+      ) {
+        return;
+      }
+      if (value < 20) score -= 2;
+
+      if (subtotal != null && value >= subtotal && value <= subtotal * 1.4) {
+        score += 5;
+      }
+
+      candidates.push({ value, score });
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       if (idNoise.test(line)) continue;
 
       MONEY_PATTERN.lastIndex = 0;
       let match: RegExpExecArray | null;
+      let foundOnLine = false;
       while ((match = MONEY_PATTERN.exec(line)) !== null) {
-        const raw = match[1];
-        let value = this.toMoney(raw);
-        if (value == null) continue;
+        foundOnLine = true;
+        pushCandidate(match[1], line);
+      }
 
-        value = this.dropRupeeGhostTwo(value, subtotal);
-
-        const hasDecimals = /\.\d{1,2}$/.test(raw.replace(/,/g, ''));
-        const isFinal = FINAL_TOTAL_PATTERN.test(line);
-        const isPretax = PRETAX_TOTAL_PATTERN.test(line);
-        let score = 1;
-
-        // Bill Amount / grand total / net payable win over "Total Amount"
-        if (isFinal) score += 18;
-        else if (TOTAL_KEYWORD_PATTERN.test(line) && !isPretax) score += 6;
-
-        // Bare AMOUNT: (fuel) — not pretax "Total Amount"
-        if (AMOUNT_LABEL_PATTERN.test(line) && !isPretax) score += 10;
-        if (/grand/i.test(line)) score += 2;
-
-        // Pre-tax "Total Amount" loses when Bill Amount exists
-        if (isPretax) score -= hasFinalLabel ? 12 : 4;
-
-        if (UNIT_PRICE_PATTERN.test(line)) score -= 12;
-        if (FUEL_META_PATTERN.test(line)) score -= 10;
-
-        if (NON_TOTAL_PATTERN.test(line) || TAX_KEYWORD_PATTERN.test(line)) {
-          score -= 4;
+      // Label on this line, amount alone on the next (very common OCR split)
+      const labelOnly =
+        (FINAL_TOTAL_PATTERN.test(line) ||
+          AMOUNT_LABEL_PATTERN.test(line) ||
+          TOTAL_KEYWORD_PATTERN.test(line)) &&
+        !foundOnLine;
+      if (labelOnly && i + 1 < lines.length) {
+        const next = lines[i + 1];
+        if (idNoise.test(next) || UNIT_PRICE_PATTERN.test(next)) continue;
+        MONEY_PATTERN.lastIndex = 0;
+        const nextMatch = MONEY_PATTERN.exec(next);
+        if (nextMatch?.[1]) {
+          pushCandidate(nextMatch[1], `${line} ${next}`, 12);
         }
-
-        const hasCurrency = /(?:₹|rs\.?|inr|\$|€|£)/i.test(line);
-        if (hasCurrency) score += 10;
-
-        if (hasDecimals) score += 4;
-        else {
-          if (
-            !isFinal &&
-            !AMOUNT_LABEL_PATTERN.test(line) &&
-            !TOTAL_KEYWORD_PATTERN.test(line) &&
-            !hasCurrency
-          ) {
-            continue;
-          }
-          score -= hasCurrency ? 2 : 6;
-        }
-
-        if (
-          value >= 50_000 &&
-          !isFinal &&
-          !AMOUNT_LABEL_PATTERN.test(line) &&
-          !hasCurrency
-        ) {
-          continue;
-        }
-        if (value < 20) score -= 2;
-
-        if (subtotal != null && value >= subtotal && value <= subtotal * 1.4) {
-          score += 5;
-        }
-
-        candidates.push({ value, score });
       }
     }
 
@@ -228,21 +246,22 @@ export class ReceiptParserService {
         let value = this.toMoney(raw);
         if (value == null || value < 10 || value >= 50_000) continue;
         value = this.dropRupeeGhostTwo(value, subtotal);
-        candidates.push({ value, score: 0.5 });
+        // Was 0.5 and then rejected by score < 2 — keep fallback usable
+        candidates.push({ value, score: 2 });
       }
     }
 
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => b.score - a.score || b.value - a.value);
     const best = candidates[0];
-    if (best.score < 2) return null;
+    if (best.score < 1) return null;
     return best.value;
   }
 
   /**
    * UPI / Paytm / GPay / PhonePe amounts.
-   * Rule #1: take the number next to ₹ / Rs / INR — never phone / year / bank digits.
-   * Paytm puts the big ₹ amount ABOVE "Money sent successfully" — always look above too.
+   * Paytm: "Money Sent Successfully" then ₹700 then "Rupees Seven Hundred Only".
+   * GPay: ₹450 above "Pay again" / "Completed" (phone line must never win).
    */
   private extractUpiAmount(lines: string[], text: string): number | null {
     const isYear = (n: number) => n >= 2000 && n <= 2099 && Number.isInteger(n);
@@ -254,139 +273,189 @@ export class ReceiptParserService {
       /\+?\s*91\b/.test(line) ||
       /\b\d{5}\s+\d{5}\b/.test(line) ||
       /\b\d{10,12}\b/.test(line.replace(/\s/g, ''));
-    const isNoiseLine = (line: string) =>
-      UPI_ID_PATTERN.test(line) ||
-      /\b(utr|upi\s*ref|transaction\s*id|google\s*transaction|from|bank|to:|paid\s*to|debited)\b/i.test(
-        line,
-      );
+    const isNoiseLine = (line: string) => {
+      if (UPI_ID_PATTERN.test(line)) return true;
+      if (
+        /\b(utr|upi\s*ref|transaction\s*id|google\s*transaction|debited|a\/c|account)\b/i.test(
+          line,
+        )
+      ) {
+        return true;
+      }
+      // Skip From/Bank lines unless they clearly show a rupee amount
+      if (
+        /\b(from|bank)\b/i.test(line) &&
+        !/(?:₹|rs\.?|inr)\s*\d/i.test(line)
+      ) {
+        return true;
+      }
+      return false;
+    };
+
+    // Paytm word form is the strongest signal when OCR finds it
+    const wordsAmount = this.extractAmountInWords(text);
+    if (wordsAmount != null) return wordsAmount;
 
     const successIdx = lines.findIndex((l) =>
-      /\b(money\s*sent\s*successfully|transaction\s*successful|payment\s*successful|paid\s*successfully|money\s*sent|payment\s*completed)\b/i.test(
+      /\b(money\s*sent\s*successfully|transaction\s*successful|payment\s*successful|paid\s*successfully|money\s*sent|payment\s*completed|completed)\b/i.test(
         l,
       ),
     );
+    const payAgainIdx = lines.findIndex((l) => /\bpay\s*again\b/i.test(l));
 
     const nearSuccessScore = (idx: number): number => {
-      if (successIdx < 0) return 0;
-      const dist = idx - successIdx;
-      // Paytm: amount is usually 1–3 lines ABOVE the success banner
-      if (dist >= -4 && dist < 0) return 55 - Math.abs(dist) * 5;
-      if (dist >= 0 && dist <= 5) return 40 - dist * 4;
-      return 0;
+      let score = 0;
+      if (successIdx >= 0) {
+        const dist = idx - successIdx;
+        // Paytm amount is BELOW "Money Sent Successfully"
+        if (dist >= 0 && dist <= 4) score += 50 - dist * 5;
+        if (dist >= -3 && dist < 0) score += 35 - Math.abs(dist) * 5;
+      }
+      if (payAgainIdx >= 0) {
+        const dist = payAgainIdx - idx;
+        // GPay amount is 1–3 lines ABOVE "Pay again"
+        if (dist >= 1 && dist <= 3) score += 60 - dist * 5;
+      }
+      return score;
     };
 
-    // ——— Pass 1: ONLY amounts with an explicit money symbol ———
-    const rupeeHits: { value: number; score: number }[] = [];
-    // OCR often mangles ₹ into ?, *, ¥; avoid lookbehind (fragile with /g)
     const rupeeRe =
-      /(?:₹|rs\.?|inr|rupees?|[?\*¥])\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+(?:\.[0-9]{2})?)/gi;
+      /(?:₹|rs\.?|inr|r\$|[?\*¥]|(?<![A-Za-z0-9])R)\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/gi;
+
+    const hits: { value: number; score: number }[] = [];
+    const push = (raw: string, score: number) => {
+      const digits = raw.replace(/,/g, '');
+      if (digits.length >= 10) return;
+      const value = this.toMoney(raw);
+      if (value == null || value < 1 || value > 1_000_000) return;
+      if (isYear(value)) return;
+      hits.push({ value, score: score + (value >= 10 && value < 100_000 ? 5 : 0) });
+    };
 
     for (const [idx, line] of lines.entries()) {
       if (isPhoneLine(line) || isDateLine(line) || isNoiseLine(line)) continue;
+
       rupeeRe.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = rupeeRe.exec(line)) !== null) {
-        const digits = m[1].replace(/,/g, '');
-        if (digits.length >= 10) continue;
-        const value = this.toMoney(m[1]);
-        if (value == null || value < 1 || value > 1_000_000) continue;
-        if (isYear(value)) continue;
-        let score = 100 - Math.min(idx, 10);
-        score += nearSuccessScore(idx);
-        if (value >= 10) score += 5;
-        rupeeHits.push({ value, score });
+        push(m[1], 100 + nearSuccessScore(idx) - Math.min(idx, 8));
+      }
+
+      // Glued OCR rupee: Rs700 / INR450 / ₹700 / R450 (GPay often drops the mark)
+      const glued = line.match(
+        /(?:^|\s)(?:rs\.?|inr|₹|R)\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/i,
+      );
+      if (glued?.[1]) {
+        push(glued[1], 95 + nearSuccessScore(idx));
+      }
+
+      // Bare hero amount (OCR dropped ₹): "700" or "450"
+      const bare = line.match(/^([0-9]+(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)$/);
+      if (bare?.[1]) {
+        const digits = bare[1].replace(/,/g, '').replace(/\.\d+$/, '');
+        if (digits.length < 5 || bare[1].includes(',')) {
+          push(bare[1], 55 + nearSuccessScore(idx));
+        }
       }
     }
 
-    // Joined window ABOVE + below success (₹ and digits often split across lines)
-    if (rupeeHits.length === 0) {
+    // Window join around success / Pay again (₹ often split from digits)
+    if (hits.length === 0) {
+      const anchor = payAgainIdx >= 0 ? payAgainIdx : successIdx;
       const window =
-        successIdx >= 0
-          ? lines
-              .slice(Math.max(0, successIdx - 4), successIdx + 8)
-              .join(' ')
-          : lines.slice(0, 12).join(' ');
+        anchor >= 0
+          ? lines.slice(Math.max(0, anchor - 5), anchor + 6).join(' ')
+          : lines.slice(0, 14).join(' ');
       rupeeRe.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = rupeeRe.exec(window)) !== null) {
-        const value = this.toMoney(m[1]);
-        if (value == null || isYear(value) || value > 1_000_000) continue;
-        if (m[1].replace(/,/g, '').length >= 10) continue;
-        rupeeHits.push({ value, score: 90 });
+        push(m[1], 85);
       }
     }
 
-    if (rupeeHits.length === 0) {
+    if (hits.length === 0) {
       rupeeRe.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = rupeeRe.exec(text)) !== null) {
-        const value = this.toMoney(m[1]);
-        if (value == null || isYear(value) || value > 1_000_000) continue;
-        if (m[1].replace(/,/g, '').length >= 10) continue;
-        rupeeHits.push({ value, score: 70 });
+        push(m[1], 65);
       }
     }
 
-    if (rupeeHits.length > 0) {
-      rupeeHits.sort((a, b) => b.score - a.score || b.value - a.value);
-      return rupeeHits[0].value;
-    }
+    if (hits.length === 0) return null;
+    hits.sort((a, b) => b.score - a.score || b.value - a.value);
+    return hits[0].value;
+  }
 
-    // ——— Pass 2: ₹ glyph lost — bare number ABOVE/below success banner ———
-    const bareHits: { value: number; score: number }[] = [];
-    const scanFrom =
-      successIdx >= 0 ? Math.max(0, successIdx - 4) : 0;
-    const scanTo =
-      successIdx >= 0
-        ? Math.min(lines.length, successIdx + 6)
-        : Math.min(lines.length, 8);
+  /** Paytm: "Rupees Seven Hundred Only" → 700 */
+  private extractAmountInWords(text: string): number | null {
+    const match = text.match(
+      /\brupees?\s+([a-z\s\-]+?)\s+only\b/i,
+    );
+    if (!match?.[1]) return null;
 
-    for (let idx = scanFrom; idx < scanTo; idx++) {
-      const line = lines[idx];
-      if (isPhoneLine(line) || isDateLine(line) || isNoiseLine(line)) continue;
-      // "2" alone is OCR'd ₹ — peek next line for the amount
-      if (/^2$/.test(line.trim()) && idx + 1 < lines.length) {
-        const next = lines[idx + 1].trim();
-        const nextAmt = next.match(
-          /^([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]{1,6}(?:\.[0-9]{2})?)$/,
-        );
-        if (nextAmt?.[1]) {
-          const value = this.toMoney(nextAmt[1]);
-          if (
-            value != null &&
-            !isYear(value) &&
-            value >= 1 &&
-            value <= 1_000_000
-          ) {
-            bareHits.push({
-              value,
-              score: 80 + nearSuccessScore(idx),
-            });
-          }
-        }
-        continue;
+    const ones: Record<string, number> = {
+      zero: 0,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+      seven: 7,
+      eight: 8,
+      nine: 9,
+      ten: 10,
+      eleven: 11,
+      twelve: 12,
+      thirteen: 13,
+      fourteen: 14,
+      fifteen: 15,
+      sixteen: 16,
+      seventeen: 17,
+      eighteen: 18,
+      nineteen: 19,
+    };
+    const tens: Record<string, number> = {
+      twenty: 20,
+      thirty: 30,
+      forty: 40,
+      fifty: 50,
+      sixty: 60,
+      seventy: 70,
+      eighty: 80,
+      ninety: 90,
+    };
+
+    const words = match[1]
+      .toLowerCase()
+      .replace(/-/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w && w !== 'and');
+
+    let total = 0;
+    let current = 0;
+    for (const w of words) {
+      if (ones[w] != null) {
+        current += ones[w];
+      } else if (tens[w] != null) {
+        current += tens[w];
+      } else if (w === 'hundred') {
+        current = (current || 1) * 100;
+      } else if (w === 'thousand') {
+        current = (current || 1) * 1000;
+        total += current;
+        current = 0;
+      } else if (w === 'lakh' || w === 'lac') {
+        current = (current || 1) * 100_000;
+        total += current;
+        current = 0;
+      } else {
+        return null;
       }
-      const standalone = line.match(
-        /^([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]{1,6}(?:\.[0-9]{2})?)$/,
-      );
-      if (!standalone?.[1]) continue;
-      const value = this.toMoney(standalone[1]);
-      if (value == null || isYear(value) || value < 1 || value > 1_000_000) {
-        continue;
-      }
-      // 5-digit+ bare ints are usually phone fragments (61447), not amounts
-      const digits = standalone[1].replace(/,/g, '').replace(/\.\d+$/, '');
-      if (digits.length >= 5 && !standalone[1].includes(',')) continue;
-
-      let score = 40 + nearSuccessScore(idx);
-      // Prefer amounts sitting just above the success line
-      if (successIdx >= 0 && idx < successIdx) score += 20;
-      bareHits.push({ value, score });
     }
-
-    if (bareHits.length === 0) return null;
-    bareHits.sort((a, b) => b.score - a.score || b.value - a.value);
-    return bareHits[0].value;
+    total += current;
+    if (total < 1 || total > 1_000_000) return null;
+    return total;
   }
 
   /** Sub-Total / Total Amount (pre-tax) — for ₹ ghost-2 and tax checks. */
@@ -1004,7 +1073,7 @@ export class ReceiptParserService {
   }
 
   private toMoney(raw: string): number | null {
-    const value = Number.parseFloat(raw.replace(/,/g, ''));
+    const value = Number.parseFloat(raw.replace(/,/g, '').replace(/\s/g, ''));
     if (!Number.isFinite(value) || value <= 0 || value > 1_000_000) return null;
     return Math.round(value * 100) / 100;
   }

@@ -1,3 +1,6 @@
+-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
+
 -- CreateEnum
 CREATE TYPE "ExpenseStatus" AS ENUM ('DRAFT', 'SUBMITTED', 'APPROVED', 'REIMBURSED', 'REJECTED');
 
@@ -10,11 +13,18 @@ CREATE TYPE "ActivityType" AS ENUM ('TASK_CREATED', 'TASK_COMPLETED', 'TASK_MOVE
 -- CreateEnum
 CREATE TYPE "AuditAction" AS ENUM ('EXPENSE_APPROVED', 'EXPENSE_REJECTED', 'EXPENSE_REIMBURSED');
 
+-- CreateEnum
+CREATE TYPE "NotificationType" AS ENUM ('EXPENSE_APPROVED', 'EXPENSE_REJECTED', 'EXPENSE_SUBMITTED', 'EXPENSE_COMMENT', 'REMINDER', 'ANNOUNCEMENT', 'SYSTEM_ALERT');
+
+-- CreateEnum
+CREATE TYPE "DevicePlatform" AS ENUM ('android', 'ios', 'web');
+
 -- CreateTable
 CREATE TABLE "Organization" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -68,6 +78,7 @@ CREATE TABLE "OrgTaskStatus" (
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
     "color" TEXT NOT NULL DEFAULT '#6B7280',
+    "icon" TEXT NOT NULL DEFAULT 'circle_outlined',
     "sortOrder" INTEGER NOT NULL DEFAULT 0,
     "isDefault" BOOLEAN NOT NULL DEFAULT false,
     "isDone" BOOLEAN NOT NULL DEFAULT false,
@@ -84,6 +95,7 @@ CREATE TABLE "OrgTaskPriority" (
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
     "color" TEXT NOT NULL DEFAULT '#6B7280',
+    "icon" TEXT NOT NULL DEFAULT 'remove',
     "sortOrder" INTEGER NOT NULL DEFAULT 0,
     "isDefault" BOOLEAN NOT NULL DEFAULT false,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
@@ -93,13 +105,30 @@ CREATE TABLE "OrgTaskPriority" (
 );
 
 -- CreateTable
+CREATE TABLE "OrgTaskTag" (
+    "id" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "color" TEXT NOT NULL DEFAULT '#6B7280',
+    "sortOrder" INTEGER NOT NULL DEFAULT 0,
+    "isDefault" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "OrgTaskTag_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,
     "organizationId" TEXT NOT NULL,
+    "managerId" TEXT,
     "email" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "title" TEXT NOT NULL DEFAULT '',
     "passwordHash" TEXT NOT NULL,
+    "isSuperAdmin" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -126,12 +155,21 @@ CREATE TABLE "Task" (
     "statusId" TEXT NOT NULL,
     "priorityId" TEXT NOT NULL,
     "dueDate" TIMESTAMP(3),
+    "dueReminderSentAt" TIMESTAMP(3),
     "assigneeId" TEXT NOT NULL,
     "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "Task_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "TaskAssignee" (
+    "taskId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+
+    CONSTRAINT "TaskAssignee_pkey" PRIMARY KEY ("taskId","userId")
 );
 
 -- CreateTable
@@ -165,6 +203,13 @@ CREATE TABLE "Meeting" (
     "end" TIMESTAMP(3) NOT NULL,
     "location" TEXT NOT NULL DEFAULT '',
     "notes" TEXT NOT NULL DEFAULT '',
+    "link" TEXT NOT NULL DEFAULT '',
+    "isOnline" BOOLEAN NOT NULL DEFAULT true,
+    "externalAttendees" JSONB NOT NULL DEFAULT '[]',
+    "recurrence" TEXT NOT NULL DEFAULT 'none',
+    "weekdays" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
+    "taskId" TEXT,
+    "reminderSentAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -230,6 +275,35 @@ CREATE TABLE "AuditLog" (
     CONSTRAINT "AuditLog_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "UserDevice" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "deviceToken" TEXT NOT NULL,
+    "platform" "DevicePlatform" NOT NULL,
+    "lastUsedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "UserDevice_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "notifications" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "body" TEXT NOT NULL,
+    "type" "NotificationType" NOT NULL,
+    "referenceId" TEXT,
+    "referenceKind" TEXT,
+    "isRead" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "notifications_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "Organization_slug_key" ON "Organization"("slug");
 
@@ -255,7 +329,16 @@ CREATE INDEX "OrgTaskPriority_organizationId_idx" ON "OrgTaskPriority"("organiza
 CREATE UNIQUE INDEX "OrgTaskPriority_organizationId_slug_key" ON "OrgTaskPriority"("organizationId", "slug");
 
 -- CreateIndex
+CREATE INDEX "OrgTaskTag_organizationId_idx" ON "OrgTaskTag"("organizationId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "OrgTaskTag_organizationId_slug_key" ON "OrgTaskTag"("organizationId", "slug");
+
+-- CreateIndex
 CREATE INDEX "User_organizationId_idx" ON "User"("organizationId");
+
+-- CreateIndex
+CREATE INDEX "User_managerId_idx" ON "User"("managerId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "User_organizationId_email_key" ON "User"("organizationId", "email");
@@ -276,6 +359,9 @@ CREATE INDEX "Task_assigneeId_idx" ON "Task"("assigneeId");
 CREATE INDEX "Task_statusId_idx" ON "Task"("statusId");
 
 -- CreateIndex
+CREATE INDEX "TaskAssignee_userId_idx" ON "TaskAssignee"("userId");
+
+-- CreateIndex
 CREATE INDEX "TaskChecklistItem_taskId_idx" ON "TaskChecklistItem"("taskId");
 
 -- CreateIndex
@@ -286,6 +372,12 @@ CREATE INDEX "Meeting_organizationId_idx" ON "Meeting"("organizationId");
 
 -- CreateIndex
 CREATE INDEX "Meeting_start_idx" ON "Meeting"("start");
+
+-- CreateIndex
+CREATE INDEX "Meeting_taskId_idx" ON "Meeting"("taskId");
+
+-- CreateIndex
+CREATE INDEX "Meeting_reminderSentAt_idx" ON "Meeting"("reminderSentAt");
 
 -- CreateIndex
 CREATE INDEX "Expense_organizationId_idx" ON "Expense"("organizationId");
@@ -301,6 +393,24 @@ CREATE INDEX "ActivityEvent_organizationId_at_idx" ON "ActivityEvent"("organizat
 
 -- CreateIndex
 CREATE INDEX "AuditLog_organizationId_createdAt_idx" ON "AuditLog"("organizationId", "createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "UserDevice_deviceToken_key" ON "UserDevice"("deviceToken");
+
+-- CreateIndex
+CREATE INDEX "UserDevice_userId_idx" ON "UserDevice"("userId");
+
+-- CreateIndex
+CREATE INDEX "UserDevice_organizationId_idx" ON "UserDevice"("organizationId");
+
+-- CreateIndex
+CREATE INDEX "notifications_userId_createdAt_idx" ON "notifications"("userId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "notifications_userId_isRead_idx" ON "notifications"("userId", "isRead");
+
+-- CreateIndex
+CREATE INDEX "notifications_organizationId_idx" ON "notifications"("organizationId");
 
 -- AddForeignKey
 ALTER TABLE "Role" ADD CONSTRAINT "Role_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -324,7 +434,13 @@ ALTER TABLE "OrgTaskStatus" ADD CONSTRAINT "OrgTaskStatus_organizationId_fkey" F
 ALTER TABLE "OrgTaskPriority" ADD CONSTRAINT "OrgTaskPriority_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "OrgTaskTag" ADD CONSTRAINT "OrgTaskTag_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "User" ADD CONSTRAINT "User_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "User" ADD CONSTRAINT "User_managerId_fkey" FOREIGN KEY ("managerId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RefreshToken" ADD CONSTRAINT "RefreshToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -342,6 +458,12 @@ ALTER TABLE "Task" ADD CONSTRAINT "Task_statusId_fkey" FOREIGN KEY ("statusId") 
 ALTER TABLE "Task" ADD CONSTRAINT "Task_priorityId_fkey" FOREIGN KEY ("priorityId") REFERENCES "OrgTaskPriority"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "TaskAssignee" ADD CONSTRAINT "TaskAssignee_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskAssignee" ADD CONSTRAINT "TaskAssignee_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "TaskChecklistItem" ADD CONSTRAINT "TaskChecklistItem_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -352,6 +474,9 @@ ALTER TABLE "TaskComment" ADD CONSTRAINT "TaskComment_authorId_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "Meeting" ADD CONSTRAINT "Meeting_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Meeting" ADD CONSTRAINT "Meeting_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "MeetingAttendee" ADD CONSTRAINT "MeetingAttendee_meetingId_fkey" FOREIGN KEY ("meetingId") REFERENCES "Meeting"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -379,3 +504,16 @@ ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_organizationId_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "UserDevice" ADD CONSTRAINT "UserDevice_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "UserDevice" ADD CONSTRAINT "UserDevice_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+

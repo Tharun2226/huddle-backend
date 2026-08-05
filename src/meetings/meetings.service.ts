@@ -67,6 +67,8 @@ export class MeetingsService {
         location: prepared.location,
         notes: prepared.notes,
         link: prepared.link,
+        isOnline: prepared.isOnline,
+        externalAttendees: prepared.externalAttendees,
         recurrence: prepared.recurrence,
         weekdays: prepared.weekdays,
         taskId: prepared.taskId,
@@ -108,6 +110,8 @@ export class MeetingsService {
           location: prepared.location,
           notes: prepared.notes,
           link: prepared.link,
+          isOnline: prepared.isOnline,
+          externalAttendees: prepared.externalAttendees,
           recurrence: prepared.recurrence,
           weekdays: prepared.weekdays,
           taskId: prepared.taskId,
@@ -164,7 +168,7 @@ export class MeetingsService {
     }
 
     const scopedIds = await getScopedUserIds(this.prisma, user);
-    const attendeeIds = [...new Set(dto.attendeeIds)];
+    const attendeeIds = [...new Set(dto.attendeeIds ?? [])];
     if (!attendeeIds.includes(user.id)) {
       attendeeIds.push(user.id);
     }
@@ -180,13 +184,23 @@ export class MeetingsService {
       if (!exists) throw new NotFoundException(`Attendee ${id} not found`);
     }
 
+    const isOnline = dto.isOnline !== false;
+    const externalAttendees = (dto.externalAttendees ?? [])
+      .map((g) => ({
+        name: g.name.trim(),
+        ...(g.email?.trim() ? { email: g.email.trim().toLowerCase() } : {}),
+      }))
+      .filter((g) => g.name.length > 0);
+
     return {
       title: dto.title.trim(),
       start,
       end,
       location: dto.location?.trim() ?? '',
       notes: dto.notes?.trim() ?? '',
-      link: dto.link?.trim() ?? '',
+      link: isOnline ? (dto.link?.trim() ?? '') : '',
+      isOnline,
+      externalAttendees,
       recurrence,
       weekdays: recurrence === 'weekly' ? weekdays : ([] as number[]),
       taskId: dto.taskId ?? null,
@@ -202,6 +216,8 @@ export class MeetingsService {
     location: string;
     notes: string;
     link?: string;
+    isOnline?: boolean;
+    externalAttendees?: unknown;
     recurrence?: string;
     weekdays?: number[];
     taskId?: string | null;
@@ -215,10 +231,29 @@ export class MeetingsService {
       location: m.location,
       notes: m.notes,
       link: m.link ?? '',
+      isOnline: m.isOnline !== false,
+      externalAttendees: this.mapExternal(m.externalAttendees),
       recurrence: m.recurrence ?? 'none',
       weekdays: m.weekdays ?? [],
       taskId: m.taskId ?? null,
       attendeeIds: m.attendees.map((a) => a.userId),
     };
+  }
+
+  private mapExternal(raw: unknown): { name: string; email?: string }[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((row) => {
+        if (!row || typeof row !== 'object') return null;
+        const r = row as { name?: unknown; email?: unknown };
+        const name = typeof r.name === 'string' ? r.name.trim() : '';
+        if (!name) return null;
+        const email =
+          typeof r.email === 'string' && r.email.trim()
+            ? r.email.trim()
+            : undefined;
+        return email ? { name, email } : { name };
+      })
+      .filter((x): x is { name: string; email?: string } => x != null);
   }
 }
