@@ -51,74 +51,124 @@ export class SuperAdminService {
     const slug = await this.uniqueSlug(dto.organizationName);
     const passwordHash = await bcrypt.hash(dto.adminPassword, 10);
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const org = await tx.organization.create({
-        data: { name: dto.organizationName.trim(), slug, isActive: true },
-      });
+    // Serverless (Vercel US) → remote Postgres can be slow; default 5s tx timeout fails.
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const org = await tx.organization.create({
+          data: { name: dto.organizationName.trim(), slug, isActive: true },
+        });
 
-      // Seed permissions
-      for (const code of DEFAULT_PERMISSIONS) {
-        await tx.permission.upsert({ where: { code }, create: { code }, update: {} });
-      }
-      const allPerms = await tx.permission.findMany({
-        where: { code: { in: DEFAULT_PERMISSIONS } },
-      });
+        await Promise.all(
+          DEFAULT_PERMISSIONS.map((code) =>
+            tx.permission.upsert({
+              where: { code },
+              create: { code },
+              update: {},
+            }),
+          ),
+        );
+        const allPerms = await tx.permission.findMany({
+          where: { code: { in: DEFAULT_PERMISSIONS } },
+        });
 
-      // Admin role with all permissions
-      const adminRole = await tx.role.create({
-        data: { organizationId: org.id, name: 'Admin', slug: 'admin', isAdmin: true, sortOrder: 0 },
-      });
-      for (const perm of allPerms) {
-        await tx.rolePermission.create({ data: { roleId: adminRole.id, permissionId: perm.id } });
-      }
+        const adminRole = await tx.role.create({
+          data: {
+            organizationId: org.id,
+            name: 'Admin',
+            slug: 'admin',
+            isAdmin: true,
+            sortOrder: 0,
+          },
+        });
+        await tx.rolePermission.createMany({
+          data: allPerms.map((perm) => ({
+            roleId: adminRole.id,
+            permissionId: perm.id,
+          })),
+          skipDuplicates: true,
+        });
 
-      // Manager role with scoped operational permissions
-      const managerPerms = allPerms.filter((p) => MANAGER_PERMISSIONS.includes(p.code));
-      const managerRole = await tx.role.create({
-        data: { organizationId: org.id, name: 'Manager', slug: 'manager', sortOrder: 1 },
-      });
-      for (const perm of managerPerms) {
-        await tx.rolePermission.create({ data: { roleId: managerRole.id, permissionId: perm.id } });
-      }
+        const managerPerms = allPerms.filter((p) =>
+          MANAGER_PERMISSIONS.includes(p.code),
+        );
+        const managerRole = await tx.role.create({
+          data: {
+            organizationId: org.id,
+            name: 'Manager',
+            slug: 'manager',
+            sortOrder: 1,
+          },
+        });
+        await tx.rolePermission.createMany({
+          data: managerPerms.map((perm) => ({
+            roleId: managerRole.id,
+            permissionId: perm.id,
+          })),
+          skipDuplicates: true,
+        });
 
-      // Member role with basic permissions
-      const memberPerms = allPerms.filter((p) =>
-        ['task.create', 'task.update', 'expense.create'].includes(p.code),
-      );
-      await tx.role.create({
-        data: {
-          organizationId: org.id, name: 'Member', slug: 'member',
-          isDefault: true, sortOrder: 2,
-          permissions: { create: memberPerms.map((p) => ({ permissionId: p.id })) },
-        },
-      });
+        const memberPerms = allPerms.filter((p) =>
+          ['task.create', 'task.update', 'expense.create'].includes(p.code),
+        );
+        await tx.role.create({
+          data: {
+            organizationId: org.id,
+            name: 'Member',
+            slug: 'member',
+            isDefault: true,
+            sortOrder: 2,
+            permissions: {
+              create: memberPerms.map((p) => ({ permissionId: p.id })),
+            },
+          },
+        });
 
-      // Default statuses & priorities
-      for (const s of DEFAULT_TASK_STATUSES) {
-        await tx.orgTaskStatus.create({ data: { organizationId: org.id, ...s } });
-      }
-      for (const p of DEFAULT_TASK_PRIORITIES) {
-        await tx.orgTaskPriority.create({ data: { organizationId: org.id, ...p } });
-      }
-      for (const t of DEFAULT_TASK_TAGS) {
-        await tx.orgTaskTag.create({ data: { organizationId: org.id, ...t } });
-      }
+        await tx.orgTaskStatus.createMany({
+          data: DEFAULT_TASK_STATUSES.map((s) => ({
+            organizationId: org.id,
+            ...s,
+          })),
+        });
+        await tx.orgTaskPriority.createMany({
+          data: DEFAULT_TASK_PRIORITIES.map((p) => ({
+            organizationId: org.id,
+            ...p,
+          })),
+        });
+        await tx.orgTaskTag.createMany({
+          data: DEFAULT_TASK_TAGS.map((t) => ({
+            organizationId: org.id,
+            ...t,
+          })),
+        });
 
-      // Admin user
-      const user = await tx.user.create({
-        data: {
-          organizationId: org.id, email, name: dto.adminName.trim(),
-          title: dto.adminTitle?.trim() || 'Admin', passwordHash,
-          roles: { create: { roleId: adminRole.id } },
-        },
-      });
+        const user = await tx.user.create({
+          data: {
+            organizationId: org.id,
+            email,
+            name: dto.adminName.trim(),
+            title: dto.adminTitle?.trim() || 'Admin',
+            passwordHash,
+            roles: { create: { roleId: adminRole.id } },
+          },
+        });
 
-      return { org, user };
-    });
+        return { org, user };
+      },
+      { maxWait: 15_000, timeout: 60_000 },
+    );
 
     return {
-      organization: { id: result.org.id, name: result.org.name, slug: result.org.slug },
-      admin: { id: result.user.id, name: result.user.name, email: result.user.email },
+      organization: {
+        id: result.org.id,
+        name: result.org.name,
+        slug: result.org.slug,
+      },
+      admin: {
+        id: result.user.id,
+        name: result.user.name,
+        email: result.user.email,
+      },
     };
   }
 
