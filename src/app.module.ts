@@ -8,6 +8,10 @@ import { MeetingsModule } from './meetings/meetings.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { ActivityModule } from './activity/activity.module';
 import { TodayModule } from './today/today.module';
+import { AdminModule } from './admin/admin.module';
+import { SuperAdminModule } from './super-admin/super-admin.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -20,6 +24,10 @@ import { TodayModule } from './today/today.module';
     ExpensesModule,
     ActivityModule,
     TodayModule,
+    AdminModule,
+    SuperAdminModule,
+    NotificationsModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}

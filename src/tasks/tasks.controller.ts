@@ -1,14 +1,16 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../common/roles.decorator';
+import { PermissionsGuard } from '../common/roles.decorator';
 import { CurrentUser } from '../common/current-user.decorator';
 import { AuthUser } from '../auth/auth.types';
 import { TasksService } from './tasks.service';
@@ -19,8 +21,10 @@ import {
   UpsertChecklistItemDto,
 } from './dto/task.dto';
 
+@ApiTags('tasks')
+@ApiBearerAuth('access-token')
 @Controller('tasks')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class TasksController {
   constructor(private readonly tasks: TasksService) {}
 
@@ -46,6 +50,11 @@ export class TasksController {
     @Body() dto: UpdateTaskDto,
   ) {
     return this.tasks.update(user, id, dto);
+  }
+
+  @Delete(':id')
+  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.tasks.remove(user, id);
   }
 
   @Post(':id/comments')

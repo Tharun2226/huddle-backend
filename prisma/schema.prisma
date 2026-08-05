@@ -1,29 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // native = local Windows/macOS; rhel = Vercel Node serverless
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-}
-
-enum UserRole {
-  MANAGER
-  MEMBER
-}
-
-enum TaskStatus {
-  TODO
-  IN_PROGRESS
-  IN_REVIEW
-  DONE
-}
-
-enum TaskPriority {
-  URGENT
-  HIGH
-  NORMAL
-  LOW
 }
 
 enum ExpenseStatus {
@@ -62,10 +45,27 @@ enum AuditAction {
   EXPENSE_REIMBURSED
 }
 
+enum NotificationType {
+  EXPENSE_APPROVED
+  EXPENSE_REJECTED
+  EXPENSE_SUBMITTED
+  EXPENSE_COMMENT
+  REMINDER
+  ANNOUNCEMENT
+  SYSTEM_ALERT
+}
+
+enum DevicePlatform {
+  android
+  ios
+  web
+}
+
 model Organization {
   id        String   @id @default(cuid())
   name      String
   slug      String   @unique
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -75,22 +75,138 @@ model Organization {
   expenses        Expense[]
   activityEvents  ActivityEvent[]
   auditLogs       AuditLog[]
+  roles           Role[]
+  taskStatuses    OrgTaskStatus[]
+  taskPriorities  OrgTaskPriority[]
+  taskTags        OrgTaskTag[]
+  userDevices     UserDevice[]
+  notifications   AppNotification[]
+}
+
+model Role {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  isDefault      Boolean  @default(false)
+  isAdmin        Boolean  @default(false)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users        UserRole[]
+  permissions  RolePermission[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  code        String @unique
+  description String @default("")
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model OrgTaskStatus {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  color          String   @default("#6B7280")
+  /// Catalog icon key, e.g. "check_circle", "flag"
+  icon           String   @default("circle_outlined")
+  sortOrder      Int      @default(0)
+  isDefault      Boolean  @default(false)
+  isDone         Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model OrgTaskPriority {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  color          String   @default("#6B7280")
+  /// Catalog icon key, e.g. "bolt", "arrow_upward"
+  icon           String   @default("remove")
+  sortOrder      Int      @default(0)
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model OrgTaskTag {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  color          String   @default("#6B7280")
+  sortOrder      Int      @default(0)
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
 }
 
 model User {
   id             String   @id @default(cuid())
   organizationId String
+  managerId      String?
   email          String
   name           String
   title          String   @default("")
-  role           UserRole @default(MEMBER)
   passwordHash   String
+  isSuperAdmin   Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  manager      User?        @relation("ManagerReports", fields: [managerId], references: [id])
+  reports      User[]       @relation("ManagerReports")
 
+  roles            UserRole[]
   assignedTasks    Task[]           @relation("TaskAssignee")
+  taskAssignments  TaskAssignee[]
   taskComments     TaskComment[]
   meetingAttendees MeetingAttendee[]
   expenses         Expense[]        @relation("ExpenseSubmitter")
@@ -98,9 +214,12 @@ model User {
   activityEvents   ActivityEvent[]
   auditLogs        AuditLog[]
   refreshTokens    RefreshToken[]
+  devices          UserDevice[]
+  notifications    AppNotification[]
 
   @@unique([organizationId, email])
   @@index([organizationId])
+  @@index([managerId])
 }
 
 model RefreshToken {
@@ -116,26 +235,43 @@ model RefreshToken {
 }
 
 model Task {
-  id             String       @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   title          String
-  description    String       @default("")
-  status         TaskStatus   @default(TODO)
-  priority       TaskPriority @default(NORMAL)
+  description    String   @default("")
+  statusId       String
+  priorityId     String
   dueDate        DateTime?
+  /// Set when a due-date / overdue FCM reminder was sent (once per task).
+  dueReminderSentAt DateTime?
   assigneeId     String
-  tags           String[]     @default([])
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  tags           String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assignee     User                @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  status       OrgTaskStatus       @relation(fields: [statusId], references: [id])
+  priority     OrgTaskPriority     @relation(fields: [priorityId], references: [id])
   checklist    TaskChecklistItem[]
   comments     TaskComment[]
+  meetings     Meeting[]
+  assignees    TaskAssignee[]
 
   @@index([organizationId])
   @@index([assigneeId])
-  @@index([status])
+  @@index([statusId])
+}
+
+model TaskAssignee {
+  taskId String
+  userId String
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+  @@index([userId])
 }
 
 model TaskChecklistItem {
@@ -171,14 +307,30 @@ model Meeting {
   end            DateTime
   location       String   @default("")
   notes          String   @default("")
+  /// Join / redirect URL (Meet, Zoom, etc.)
+  link           String   @default("")
+  /// true = online (link relevant); false = in-person
+  isOnline       Boolean  @default(true)
+  /// Guests outside the org: [{ "name": "...", "email": "..."? }]
+  externalAttendees Json  @default("[]")
+  /// none | daily | weekly
+  recurrence     String   @default("none")
+  /// Dart weekday numbers: 1=Mon ... 7=Sun (used when recurrence=weekly)
+  weekdays       Int[]    @default([])
+  taskId         String?
+  /// Set when the "30 min before" FCM reminder was sent.
+  reminderSentAt DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
   attendees    MeetingAttendee[]
 
   @@index([organizationId])
   @@index([start])
+  @@index([taskId])
+  @@index([reminderSentAt])
 }
 
 model MeetingAttendee {
@@ -249,4 +401,42 @@ model AuditLog {
   actor        User         @relation(fields: [actorId], references: [id])
 
   @@index([organizationId, createdAt])
+}
+
+model UserDevice {
+  id             String         @id @default(cuid())
+  userId         String
+  organizationId String
+  deviceToken    String         @unique
+  platform       DevicePlatform
+  lastUsedAt     DateTime       @default(now())
+  createdAt      DateTime       @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([organizationId])
+}
+
+model AppNotification {
+  id             String           @id @default(cuid())
+  userId         String
+  organizationId String
+  title          String
+  body           String
+  type           NotificationType
+  referenceId    String?
+  /// Optional deep-link hint: expense | meeting | expense
+  referenceKind  String?
+  isRead         Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+  @@index([userId, createdAt])
+  @@index([userId, isRead])
+  @@index([organizationId])
 }

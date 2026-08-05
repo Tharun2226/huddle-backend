@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "buildCommand": "prisma generate && nest build",
+  "installCommand": "npm install",
+  "functions": {
+    "api/index.ts": {
+      "memory": 1024,
+      "maxDuration": 60,
+      "includeFiles": "node_modules/.prisma/**,node_modules/@prisma/client/**"
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api" }
+  ],
+  "crons": [
+    {
+      "path": "/api/internal/cron/reminders",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
