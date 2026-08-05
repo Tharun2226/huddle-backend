@@ -8,6 +8,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
+import { PRISMA_TX } from '../common/prisma-tx';
 import { getScopedUserIds } from '../common/team-scope';
 import { InviteUserDto, UpdateUserDto } from './dto/user.dto';
 
@@ -151,7 +152,7 @@ export class UsersService {
         },
         include: { roles: { include: { role: true } }, manager: true },
       });
-    });
+    }, { ...PRISMA_TX });
 
     return this.toPublic(updated);
   }

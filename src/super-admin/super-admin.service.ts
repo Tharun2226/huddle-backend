@@ -1,6 +1,7 @@
 import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { PRISMA_TX } from '../common/prisma-tx';
 import { CreateOrganizationDto } from './dto/create-org.dto';
 
 const DEFAULT_PERMISSIONS = [
@@ -155,7 +156,7 @@ export class SuperAdminService {
 
         return { org, user };
       },
-      { maxWait: 15_000, timeout: 60_000 },
+      { ...PRISMA_TX },
     );
 
     return {

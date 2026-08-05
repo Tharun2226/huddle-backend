@@ -5,6 +5,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { AppModule } from './app.module';
+import { ClientSafeExceptionFilter } from './common/client-safe-exception.filter';
 
 /**
  * Shared Nest bootstrap for local `main.ts` and the Vercel serverless handler.
@@ -26,11 +27,14 @@ export async function createApp(): Promise<NestExpressApplication> {
       forbidNonWhitelisted: true,
     }),
   );
+  app.useGlobalFilters(new ClientSafeExceptionFilter());
 
   // Local /tmp-friendly uploads (Vercel filesystem is ephemeral).
   const uploadsRoot =
     process.env.UPLOADS_DIR?.trim() ||
-    (process.env.VERCEL ? join('/tmp', 'huddle-uploads') : join(process.cwd(), 'uploads'));
+    (process.env.VERCEL
+      ? join('/tmp', 'huddle-uploads')
+      : join(process.cwd(), 'uploads'));
   if (!existsSync(uploadsRoot)) {
     mkdirSync(uploadsRoot, { recursive: true });
   }

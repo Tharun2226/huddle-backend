@@ -8,6 +8,7 @@ import { ActivityType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
 import { recordActivity } from '../common/activity.util';
+import { PRISMA_TX } from '../common/prisma-tx';
 import { getScopedUserIds } from '../common/team-scope';
 import { CreateMeetingDto, UpdateMeetingDto } from './dto/meeting.dto';
 
@@ -121,7 +122,7 @@ export class MeetingsService {
         },
         include: { attendees: true },
       });
-    });
+    }, { ...PRISMA_TX });
 
     return this.map(meeting);
   }
