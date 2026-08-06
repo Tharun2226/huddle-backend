@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
 import { recordActivity } from '../common/activity.util';
 import { getScopedUserIds } from '../common/team-scope';
+import { isReceiptOcrEnabled } from '../common/serverless-env';
 import { uploadsRoot } from '../common/uploads-path';
 import { CreateExpenseDto, DecisionDto } from './dto/expense.dto';
 import { ReceiptOcrService } from './receipt-ocr.service';
@@ -70,6 +71,11 @@ export class ExpensesService {
    */
   async scanReceipt(file: Express.Multer.File, user: AuthUser) {
     const { receiptUrl } = this.saveReceiptFile(file, user);
+
+    if (!isReceiptOcrEnabled()) {
+      return this.manualEntryScanResponse(receiptUrl, 'OCR_SKIPPED_SERVERLESS');
+    }
+
     try {
       const extracted = await this.receiptOcr.scan(file.buffer);
       return {
@@ -91,34 +97,46 @@ export class ExpensesService {
         rawText: extracted.rawText,
       };
     } catch (err) {
-      // Tesseract/sharp often fail on Vercel — keep the image, let user type fields.
-      return {
-        success: true,
+      // Tesseract/sharp often fail on serverless — keep the image, let user type fields.
+      return this.manualEntryScanResponse(
         receiptUrl,
-        merchant: null,
-        amount: null,
-        date: null,
-        tax: null,
-        invoiceNumber: null,
-        gstin: null,
-        currency: 'INR',
-        noteLines: [],
-        category: null,
-        confidence: { overall: 0 },
-        riskScore: 0,
-        riskLevel: 'Medium Risk' as const,
-        issues: [
-          {
-            code: 'OCR_UNAVAILABLE',
-            message:
-              'Automatic scan is unavailable right now. Receipt attached — enter details manually.',
-            points: 0,
-          },
-        ],
-        rawText: '',
-        ocrError: err instanceof Error ? err.message : String(err),
-      };
+        'OCR_UNAVAILABLE',
+        err instanceof Error ? err.message : String(err),
+      );
     }
+  }
+
+  /** Fast path when OCR is skipped or failed — receipt is saved, user fills fields. */
+  private manualEntryScanResponse(
+    receiptUrl: string,
+    code: 'OCR_SKIPPED_SERVERLESS' | 'OCR_UNAVAILABLE',
+    ocrError?: string,
+  ) {
+    const message =
+      code === 'OCR_SKIPPED_SERVERLESS'
+        ? 'Receipt attached. Enter amount and merchant below (auto-scan runs on dedicated servers).'
+        : 'Automatic scan is unavailable right now. Receipt attached — enter details manually.';
+
+    return {
+      success: true,
+      receiptUrl,
+      merchant: null,
+      amount: null,
+      date: null,
+      tax: null,
+      invoiceNumber: null,
+      gstin: null,
+      currency: 'INR',
+      noteLines: [],
+      category: null,
+      confidence: { overall: 0 },
+      riskScore: 0,
+      riskLevel: 'Medium Risk' as const,
+      issues: [{ code, message, points: 0 }],
+      rawText: '',
+      ocrSkipped: true,
+      ...(ocrError ? { ocrError } : {}),
+    };
   }
 
   async list(user: AuthUser) {
@@ -306,6 +324,7 @@ export class ExpensesService {
       body: `${updated.merchant} (₹${Number(updated.amount).toFixed(0)}) was marked reimbursed.`,
       type: NotificationType.SYSTEM_ALERT,
       referenceId: updated.id,
+      data: { referenceKind: 'expense' },
     });
     return this.map(updated);
   }
@@ -369,6 +388,7 @@ export class ExpensesService {
         ? NotificationType.EXPENSE_APPROVED
         : NotificationType.EXPENSE_REJECTED,
       referenceId: updated.id,
+      data: { referenceKind: 'expense' },
     });
 
     return this.map(updated);
@@ -388,6 +408,7 @@ export class ExpensesService {
       body: `${actor.name} submitted ${expense.merchant} (₹${Number(expense.amount).toFixed(0)}) for approval.`,
       type: NotificationType.EXPENSE_SUBMITTED,
       referenceId: expense.id,
+      data: { referenceKind: 'expense' },
     });
   }
 

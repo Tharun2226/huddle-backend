@@ -174,6 +174,14 @@ export class NotificationService {
     return { ok: true, id };
   }
 
+  /** Delete every notification for the current user. */
+  async clearAll(user: AuthUser) {
+    const result = await this.prisma.appNotification.deleteMany({
+      where: { userId: user.id },
+    });
+    return { ok: true, deleted: result.count };
+  }
+
   private async sendToTokens(
     tokens: string[],
     payload: {
