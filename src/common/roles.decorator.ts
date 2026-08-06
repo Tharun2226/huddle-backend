@@ -56,7 +56,18 @@ export class PermissionsGuard implements CanActivate {
     if (requiredPerms?.length) {
       if (user.isAdmin) return true;
       const has = requiredPerms.every((p) => user.permissions.includes(p));
-      if (!has) throw new ForbiddenException('Insufficient permissions');
+      if (has) return true;
+      // Managers approve expenses by role — tolerate JWTs missing expense.approve.
+      if (
+        requiredPerms.includes('expense.approve') &&
+        user.roleNames.some((n) => {
+          const name = n.toLowerCase();
+          return name === 'manager' || name.endsWith(' manager');
+        })
+      ) {
+        return true;
+      }
+      throw new ForbiddenException('Insufficient permissions');
     }
 
     return true;
