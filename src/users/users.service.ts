@@ -17,9 +17,17 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listForOrg(user: AuthUser) {
-    const scopedIds = await getScopedUserIds(this.prisma, user);
+    // Admins see the full org roster. Managers/members use team scope.
+    // (getScopedUserIds returns [] for admins — that must NOT be used with `id: { in: [] }`.)
+    const where = user.isAdmin
+      ? { organizationId: user.organizationId }
+      : {
+          organizationId: user.organizationId,
+          id: { in: await getScopedUserIds(this.prisma, user) },
+        };
+
     const users = await this.prisma.user.findMany({
-      where: { organizationId: user.organizationId, id: { in: scopedIds } },
+      where,
       include: { roles: { include: { role: true } }, manager: true },
       orderBy: { name: 'asc' },
     });

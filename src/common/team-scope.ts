@@ -2,12 +2,26 @@ import { AuthUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 
 export function hasManagerRole(user: AuthUser) {
-  return user.roleNames.some((name) => {
+  if (user.roleNames.some((name) => {
     const n = name.toLowerCase();
     return n === 'manager' || n.endsWith(' manager');
-  });
+  })) {
+    return true;
+  }
+  // Fallback when older tokens omit roleNames but still carry manager permissions.
+  return (
+    !user.isAdmin &&
+    (user.permissions.includes('user.invite') ||
+      user.permissions.includes('task.assign'))
+  );
 }
 
+/**
+ * User ids visible to this actor for scoped lists.
+ * Admins: returns [] — callers MUST use organizationId-only filters when isAdmin.
+ * Managers: self + direct reports.
+ * Members: self only.
+ */
 export async function getScopedUserIds(
   prisma: PrismaService,
   user: AuthUser,
