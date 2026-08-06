@@ -19,7 +19,7 @@ import { recordActivity } from '../common/activity.util';
 import { getScopedUserIds } from '../common/team-scope';
 import { isReceiptOcrEnabled } from '../common/serverless-env';
 import { uploadsRoot } from '../common/uploads-path';
-import { CreateExpenseDto, DecisionDto } from './dto/expense.dto';
+import { CreateExpenseDto, DecisionDto, UpdateExpenseDto } from './dto/expense.dto';
 import { ReceiptOcrService } from './receipt-ocr.service';
 import { NotificationService } from '../notifications/notification.service';
 
@@ -211,6 +211,34 @@ export class ExpensesService {
     }
 
     return this.map(expense);
+  }
+
+  /** Owner can edit draft or rejected expenses (fix & resubmit). */
+  async update(user: AuthUser, id: string, dto: UpdateExpenseDto) {
+    const expense = await this.findScoped(user, id, true);
+    if (
+      expense.status !== ExpenseStatus.DRAFT &&
+      expense.status !== ExpenseStatus.REJECTED
+    ) {
+      throw new BadRequestException('Only draft or rejected expenses can be edited');
+    }
+
+    const updated = await this.prisma.expense.update({
+      where: { id },
+      data: {
+        ...(dto.amount != null ? { amount: dto.amount } : {}),
+        ...(dto.category != null ? { category: dto.category } : {}),
+        ...(dto.date != null ? { date: new Date(dto.date) } : {}),
+        ...(dto.merchant != null ? { merchant: dto.merchant } : {}),
+        ...(dto.notes != null ? { notes: dto.notes } : {}),
+        ...(dto.receiptUrl != null ? { receiptUrl: dto.receiptUrl } : {}),
+      },
+    });
+
+    if (dto.submitNow) {
+      return this.submit(user, id);
+    }
+    return this.map(updated);
   }
 
   async submit(user: AuthUser, id: string) {
