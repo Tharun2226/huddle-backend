@@ -41,7 +41,7 @@ async function bootstrapServer(): Promise<Express> {
   }
   app.useStaticAssets(root, { prefix: '/uploads/' });
 
-  if (process.env.ENABLE_SWAGGER !== 'false') {
+  if (process.env.ENABLE_SWAGGER === 'true') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Huddle API')
       .setDescription('NestJS + Prisma API for the Huddle mobile app')

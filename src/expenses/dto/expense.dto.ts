@@ -46,6 +46,46 @@ export class CreateExpenseDto {
   submitNow?: boolean;
 }
 
+/** Patch draft / rejected expenses before resubmit. */
+export class UpdateExpenseDto {
+  @ApiPropertyOptional({ example: 42.5 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  amount?: number;
+
+  @ApiPropertyOptional({ enum: ExpenseCategory })
+  @IsOptional()
+  @IsEnum(ExpenseCategory)
+  category?: ExpenseCategory;
+
+  @ApiPropertyOptional({ example: '2026-07-29T00:00:00.000Z' })
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+
+  @ApiPropertyOptional({ example: 'Starbucks' })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  merchant?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  receiptUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Also submit after update' })
+  @IsOptional()
+  @IsBoolean()
+  submitNow?: boolean;
+}
+
 export class DecisionDto {
   @ApiPropertyOptional()
   @IsOptional()

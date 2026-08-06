@@ -12,12 +12,9 @@ export async function getScopedUserIds(
   prisma: PrismaService,
   user: AuthUser,
 ): Promise<string[]> {
+  // Admins filter by organizationId only — skip a full-org user scan.
   if (user.isAdmin) {
-    const users = await prisma.user.findMany({
-      where: { organizationId: user.organizationId },
-      select: { id: true },
-    });
-    return users.map((entry) => entry.id);
+    return [];
   }
 
   if (hasManagerRole(user)) {

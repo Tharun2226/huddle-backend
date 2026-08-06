@@ -6,6 +6,7 @@ import {
   MaxFileSizeValidator,
   Param,
   ParseFilePipe,
+  Patch,
   Post,
   UploadedFile,
   UseGuards,
@@ -19,7 +20,7 @@ import { PermissionsGuard, RequirePermissions } from '../common/roles.decorator'
 import { CurrentUser } from '../common/current-user.decorator';
 import { AuthUser } from '../auth/auth.types';
 import { ExpensesService } from './expenses.service';
-import { CreateExpenseDto, DecisionDto } from './dto/expense.dto';
+import { CreateExpenseDto, DecisionDto, UpdateExpenseDto } from './dto/expense.dto';
 
 @ApiTags('expenses')
 @ApiBearerAuth('access-token')
@@ -101,6 +102,15 @@ export class ExpensesController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateExpenseDto) {
     return this.expenses.create(user, dto);
+  }
+
+  @Patch(':id')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateExpenseDto,
+  ) {
+    return this.expenses.update(user, id, dto);
   }
 
   @Delete(':id')

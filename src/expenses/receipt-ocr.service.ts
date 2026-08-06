@@ -1,11 +1,10 @@
 /**
  * Receipt OCR — Tesseract.js + sharp preprocess + rule-based parser.
- * Lives inside huddle-backend (no separate Next.js scanner).
+ * Heavy deps are loaded lazily so Vercel cold starts stay light when OCR is skipped.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import sharp from 'sharp';
-import { createWorker, PSM } from 'tesseract.js';
+import type { PSM } from 'tesseract.js';
 import {
   ReceiptParserService,
   type ParsedReceipt,
@@ -140,6 +139,7 @@ export class ReceiptOcrService {
   }
 
   private async buildVariants(buffer: Buffer): Promise<Buffer[]> {
+    const { default: sharp } = await import('sharp');
     const variants: Buffer[] = [];
     try {
       const meta = await sharp(buffer).metadata();
@@ -233,6 +233,7 @@ export class ReceiptOcrService {
     buffer: Buffer,
     psm: PSM,
   ): Promise<{ text: string; confidence: number }> {
+    const { createWorker } = await import('tesseract.js');
     const worker = await createWorker('eng', 1, {
       logger: () => undefined,
       // Vercel filesystem is read-only except /tmp — tessdata must land there.
@@ -265,6 +266,7 @@ export class ReceiptOcrService {
   private async recognizeImage(
     buffer: Buffer,
   ): Promise<{ rawText: string; confidence: number | null }> {
+    const { PSM } = await import('tesseract.js');
     const variants = await this.buildVariants(buffer);
     let best: { text: string; confidence: number; signal: number } | null =
       null;

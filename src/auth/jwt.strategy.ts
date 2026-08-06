@@ -18,57 +18,40 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     });
   }
 
+  /**
+   * Prefer JWT permission claims. One light user+role-name select replaces the
+   * previous roles→permissions join tree on every authenticated request.
+   */
   async validate(payload: JwtPayload): Promise<AuthUser> {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      include: {
-        organization: true,
-        roles: {
-          include: {
-            role: {
-              include: { permissions: { include: { permission: true } } },
-            },
-          },
-        },
+      select: {
+        name: true,
+        title: true,
+        isSuperAdmin: true,
+        organization: { select: { isActive: true } },
+        roles: { select: { role: { select: { name: true } } } },
       },
     });
 
-    if (!user) {
-      return {
-        id: payload.sub,
-        email: payload.email,
-        name: '',
-        title: '',
-        organizationId: payload.organizationId,
-        permissions: payload.permissions ?? [],
-        isAdmin: payload.isAdmin ?? false,
-        isSuperAdmin: payload.isSuperAdmin ?? false,
-        roleNames: [],
-      };
-    }
-    if (!user.organization.isActive) {
+    if (user && !user.organization.isActive) {
       throw new ForbiddenException('Organization is inactive');
     }
 
-    const permissions = [
-      ...new Set(
-        user.roles.flatMap((ur) =>
-          ur.role.permissions.map((rp) => rp.permission.code),
-        ),
-      ),
-    ];
-    const isAdmin = user.roles.some((ur) => ur.role.isAdmin);
-    const roleNames = user.roles.map((ur) => ur.role.name);
+    const roleNames =
+      payload.roleNames?.length
+        ? payload.roleNames
+        : (user?.roles ?? []).map((ur) => ur.role.name);
 
     return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      title: user.title,
-      organizationId: user.organizationId,
-      permissions,
-      isAdmin,
-      isSuperAdmin: user.isSuperAdmin,
+      id: payload.sub,
+      email: payload.email,
+      name: user?.name ?? payload.name ?? '',
+      title: user?.title ?? payload.title ?? '',
+      organizationId: payload.organizationId,
+      permissions: payload.permissions ?? [],
+      isAdmin: payload.isAdmin ?? false,
+      isSuperAdmin: user?.isSuperAdmin ?? payload.isSuperAdmin ?? false,
       roleNames,
     };
   }

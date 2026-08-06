@@ -17,4 +17,8 @@ export class JwtPayload {
   permissions!: string[];
   isAdmin!: boolean;
   isSuperAdmin!: boolean;
+  /** Embedded so every request avoids a heavy roles/permissions join. */
+  roleNames!: string[];
+  name?: string;
+  title?: string;
 }
