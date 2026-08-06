@@ -43,6 +43,12 @@ export class NotificationsController {
     return this.notifications.listForUser(user);
   }
 
+  /** Clear the whole inbox for the current user. */
+  @Delete('notifications')
+  clearAll(@CurrentUser() user: AuthUser) {
+    return this.notifications.clearAll(user);
+  }
+
   /** Manually run reminder scan (useful while testing). */
   @Post('notifications/run-reminders')
   runReminders() {
