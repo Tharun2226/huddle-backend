@@ -36,7 +36,8 @@ export async function createApp(): Promise<NestExpressApplication> {
   }
   app.useStaticAssets(root, { prefix: '/uploads/' });
 
-  if (process.env.ENABLE_SWAGGER !== 'false') {
+  // Swagger is opt-in — building the OpenAPI doc slows cold starts on Vercel.
+  if (process.env.ENABLE_SWAGGER === 'true') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Huddle API')
       .setDescription('NestJS + Prisma API for the Huddle mobile app')

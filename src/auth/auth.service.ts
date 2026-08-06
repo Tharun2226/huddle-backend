@@ -107,6 +107,7 @@ export class AuthService {
       ),
     ];
     const isAdmin = userWithRoles.roles.some((ur) => ur.role.isAdmin);
+    const roleNames = userWithRoles.roles.map((ur) => ur.role.name);
 
     const payload: JwtPayload = {
       sub: userWithRoles.id,
@@ -115,6 +116,9 @@ export class AuthService {
       permissions,
       isAdmin,
       isSuperAdmin: userWithRoles.isSuperAdmin,
+      roleNames,
+      name: userWithRoles.name,
+      title: userWithRoles.title,
     };
 
     const accessToken = await this.jwt.signAsync(payload, {

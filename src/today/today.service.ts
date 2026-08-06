@@ -36,10 +36,21 @@ export class TodayService {
 
     const doneStatuses = await this.prisma.orgTaskStatus.findMany({
       where: { organizationId: user.organizationId, isDone: true },
+      select: { id: true },
     });
     const doneStatusIds = doneStatuses.map((s) => s.id);
 
-    const [meetings, dueToday, overdue, pendingApprovals, myPending] =
+    const todayTaskInclude = {
+      checklist: { select: { id: true, label: true, done: true } },
+      status: true,
+      priority: true,
+      assignees: {
+        include: { user: { select: { id: true, name: true } } },
+      },
+      assignee: { select: { id: true, name: true } },
+    };
+
+    const [meetings, dueToday, overdue, pendingApprovals, myPending, nextMeeting] =
       await Promise.all([
         this.prisma.meeting.findMany({
           where: { ...meetingWhere, start: { gte: start, lt: end } },
@@ -52,7 +63,7 @@ export class TodayService {
             dueDate: { gte: start, lt: end },
             statusId: { notIn: doneStatusIds },
           },
-          include: { checklist: true, comments: true, status: true, priority: true },
+          include: todayTaskInclude,
           orderBy: { dueDate: 'asc' },
         }),
         this.prisma.task.findMany({
@@ -61,7 +72,7 @@ export class TodayService {
             dueDate: { lt: start },
             statusId: { notIn: doneStatusIds },
           },
-          include: { checklist: true, comments: true, status: true, priority: true },
+          include: todayTaskInclude,
           orderBy: { dueDate: 'asc' },
         }),
         canApprove
@@ -88,13 +99,12 @@ export class TodayService {
               orderBy: { createdAt: 'desc' },
             })
           : Promise.resolve([]),
+        this.prisma.meeting.findFirst({
+          where: { ...meetingWhere, start: { gte: new Date() } },
+          include: { attendees: true },
+          orderBy: { start: 'asc' },
+        }),
       ]);
-
-    const nextMeeting = await this.prisma.meeting.findFirst({
-      where: { ...meetingWhere, start: { gte: new Date() } },
-      include: { attendees: true },
-      orderBy: { start: 'asc' },
-    });
 
     return {
       nextMeeting: nextMeeting
@@ -131,6 +141,21 @@ export class TodayService {
   }
 
   private mapTask(t: any) {
+    const fromJoin: { id: string; name: string }[] = (t.assignees ?? []).map(
+      (a: any) => ({
+        id: a.userId ?? a.user?.id,
+        name: a.user?.name ?? '',
+      }),
+    );
+    const assigneeIds =
+      fromJoin.length > 0
+        ? [...new Set(fromJoin.map((a) => a.id).filter(Boolean))]
+        : [t.assigneeId];
+    const assigneeNames =
+      fromJoin.length > 0
+        ? assigneeIds.map((id) => fromJoin.find((a) => a.id === id)?.name ?? '')
+        : [t.assignee?.name ?? ''];
+
     return {
       id: t.id,
       title: t.title,
@@ -147,15 +172,17 @@ export class TodayService {
       priority: t.priority.slug,
       dueDate: t.dueDate?.toISOString() ?? null,
       assigneeId: t.assigneeId,
+      assigneeName: t.assignee?.name ?? null,
+      assigneeIds,
+      assigneeNames,
       tags: t.tags,
       createdAt: t.createdAt.toISOString(),
-      checklist: t.checklist,
-      comments: t.comments.map((c: any) => ({
+      checklist: (t.checklist ?? []).map((c: any) => ({
         id: c.id,
-        authorId: c.authorId,
-        body: c.body,
-        createdAt: c.createdAt.toISOString(),
+        label: c.label,
+        done: c.done,
       })),
+      comments: [],
     };
   }
 

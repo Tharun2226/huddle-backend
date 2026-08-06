@@ -17,17 +17,22 @@ import {
   UpsertChecklistItemDto,
 } from './dto/task.dto';
 
-const taskInclude = {
+const taskListInclude = {
   checklist: { orderBy: { sortOrder: 'asc' as const } },
-  comments: {
-    orderBy: { createdAt: 'asc' as const },
-    include: { author: { select: { id: true, name: true } } },
-  },
   status: true,
   priority: true,
   assignee: { select: { id: true, name: true } },
   assignees: {
     include: { user: { select: { id: true, name: true } } },
+  },
+};
+
+/** Detail / mutations — includes comments. List endpoints omit them. */
+const taskInclude = {
+  ...taskListInclude,
+  comments: {
+    orderBy: { createdAt: 'asc' as const },
+    include: { author: { select: { id: true, name: true } } },
   },
 };
 
@@ -49,7 +54,7 @@ export class TasksService {
 
     const tasks = await this.prisma.task.findMany({
       where,
-      include: taskInclude,
+      include: taskListInclude,
       orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
     });
     return tasks.map((t) => this.mapTask(t));
