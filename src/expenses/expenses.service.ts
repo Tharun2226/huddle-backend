@@ -162,7 +162,7 @@ export class ExpensesService {
   }
 
   async pendingApprovals(user: AuthUser) {
-    if (!user.isAdmin && !user.permissions.includes('expense.approve')) {
+    if (!this.canDecideExpenses(user)) {
       throw new ForbiddenException('Insufficient permissions');
     }
     const scopedIds = await getScopedUserIds(this.prisma, user);
@@ -171,7 +171,10 @@ export class ExpensesService {
       where: {
         organizationId: user.organizationId,
         status: ExpenseStatus.SUBMITTED,
-        ...(user.isAdmin ? {} : { submitterId: { in: scopedIds } }),
+        // Managers with approve permission see the org queue (matches Flutter).
+        ...(user.isAdmin || user.permissions.includes('expense.approve')
+          ? {}
+          : { submitterId: { in: scopedIds } }),
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -365,7 +368,7 @@ export class ExpensesService {
     activity: ActivityType,
     note: string,
   ) {
-    if (!user.isAdmin && !user.permissions.includes('expense.approve')) {
+    if (!this.canDecideExpenses(user)) {
       throw new ForbiddenException('Insufficient permissions');
     }
     const expense = await this.findScoped(user, id);
@@ -477,6 +480,16 @@ export class ExpensesService {
     return [...ids];
   }
 
+  private canDecideExpenses(user: AuthUser): boolean {
+    if (user.isAdmin || user.permissions.includes('expense.approve')) {
+      return true;
+    }
+    return user.roleNames.some((n) => {
+      const name = n.toLowerCase();
+      return name === 'manager' || name.endsWith(' manager');
+    });
+  }
+
   private async findScoped(user: AuthUser, id: string, ownOnly = false) {
     const expense = await this.prisma.expense.findFirst({
       where: { id, organizationId: user.organizationId },
@@ -491,14 +504,32 @@ export class ExpensesService {
       throw new ForbiddenException('Draft expenses are private to the creator');
     }
 
+    if (ownOnly) {
+      if (expense.submitterId !== user.id) {
+        throw new ForbiddenException('Not your expense');
+      }
+      return expense;
+    }
+
+    if (user.isAdmin) {
+      return expense;
+    }
+
     const scopedIds = await getScopedUserIds(this.prisma, user);
-    if ((ownOnly || !user.isAdmin) && !scopedIds.includes(expense.submitterId)) {
-      throw new ForbiddenException('Not allowed to access this expense');
+    if (scopedIds.includes(expense.submitterId)) {
+      return expense;
     }
-    if (ownOnly && expense.submitterId !== user.id) {
-      throw new ForbiddenException('Not your expense');
+
+    // App shows org-wide expenses to managers; allow approve/reject/reimburse.
+    if (
+      this.canDecideExpenses(user) &&
+      (expense.status === ExpenseStatus.SUBMITTED ||
+        expense.status === ExpenseStatus.APPROVED)
+    ) {
+      return expense;
     }
-    return expense;
+
+    throw new ForbiddenException('Not allowed to access this expense');
   }
 
   private map(e: any) {
