@@ -235,6 +235,10 @@ export class ReceiptOcrService {
   ): Promise<{ text: string; confidence: number }> {
     const worker = await createWorker('eng', 1, {
       logger: () => undefined,
+      // Vercel filesystem is read-only except /tmp — tessdata must land there.
+      ...(process.env.VERCEL
+        ? { cachePath: '/tmp/tessdata', gzip: true }
+        : {}),
     });
     try {
       await worker.setParameters({
@@ -274,7 +278,10 @@ export class ReceiptOcrService {
       attempts.push({ buf: v, psm: PSM.SINGLE_BLOCK });
     }
 
-    for (const attempt of attempts) {
+    // Serverless: fewer OCR passes to stay under time/memory limits.
+    const limited = process.env.VERCEL ? attempts.slice(0, 2) : attempts;
+
+    for (const attempt of limited) {
       try {
         const result = await this.recognizeOnce(attempt.buf, attempt.psm);
         const signal = receiptSignal(result.text, result.confidence);

@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
 import { recordActivity } from '../common/activity.util';
 import { getScopedUserIds } from '../common/team-scope';
+import { uploadsRoot } from '../common/uploads-path';
 import { CreateExpenseDto, DecisionDto } from './dto/expense.dto';
 import { ReceiptOcrService } from './receipt-ocr.service';
 import { NotificationService } from '../notifications/notification.service';
@@ -46,7 +47,7 @@ export class ExpensesService {
       throw new BadRequestException('Only image receipts are supported');
     }
 
-    const dir = join(process.cwd(), 'uploads', 'receipts', user.organizationId);
+    const dir = join(uploadsRoot(), 'receipts', user.organizationId);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -65,28 +66,59 @@ export class ExpensesService {
   /**
    * Store the receipt file, OCR it on the backend, and return extracted fields.
    * Empty/null fields mean OCR could not confidently read them — never random.
+   * On serverless, OCR failures must not 500 — return soft empty fields.
    */
   async scanReceipt(file: Express.Multer.File, user: AuthUser) {
     const { receiptUrl } = this.saveReceiptFile(file, user);
-    const extracted = await this.receiptOcr.scan(file.buffer);
-    return {
-      success: true,
-      receiptUrl,
-      merchant: extracted.merchant,
-      amount: extracted.amount,
-      date: extracted.date,
-      tax: extracted.tax,
-      invoiceNumber: extracted.invoiceNumber,
-      gstin: extracted.gstin,
-      currency: extracted.currency,
-      noteLines: extracted.noteLines ?? [],
-      category: extracted.category,
-      confidence: extracted.confidence,
-      riskScore: extracted.riskScore,
-      riskLevel: extracted.riskLevel,
-      issues: extracted.issues,
-      rawText: extracted.rawText,
-    };
+    try {
+      const extracted = await this.receiptOcr.scan(file.buffer);
+      return {
+        success: true,
+        receiptUrl,
+        merchant: extracted.merchant,
+        amount: extracted.amount,
+        date: extracted.date,
+        tax: extracted.tax,
+        invoiceNumber: extracted.invoiceNumber,
+        gstin: extracted.gstin,
+        currency: extracted.currency,
+        noteLines: extracted.noteLines ?? [],
+        category: extracted.category,
+        confidence: extracted.confidence,
+        riskScore: extracted.riskScore,
+        riskLevel: extracted.riskLevel,
+        issues: extracted.issues,
+        rawText: extracted.rawText,
+      };
+    } catch (err) {
+      // Tesseract/sharp often fail on Vercel — keep the image, let user type fields.
+      return {
+        success: true,
+        receiptUrl,
+        merchant: null,
+        amount: null,
+        date: null,
+        tax: null,
+        invoiceNumber: null,
+        gstin: null,
+        currency: 'INR',
+        noteLines: [],
+        category: null,
+        confidence: { overall: 0 },
+        riskScore: 0,
+        riskLevel: 'Medium Risk' as const,
+        issues: [
+          {
+            code: 'OCR_UNAVAILABLE',
+            message:
+              'Automatic scan is unavailable right now. Receipt attached — enter details manually.',
+            points: 0,
+          },
+        ],
+        rawText: '',
+        ocrError: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   async list(user: AuthUser) {
@@ -217,8 +249,8 @@ export class ExpensesService {
 
     if (expense.receiptUrl) {
       try {
-        const relative = expense.receiptUrl.replace(/^\//, '');
-        const full = join(process.cwd(), relative);
+        const relative = expense.receiptUrl.replace(/^\//, '').replace(/^uploads[\\/]/, '');
+        const full = join(uploadsRoot(), relative);
         if (existsSync(full)) unlinkSync(full);
       } catch {
         // File cleanup is best-effort
