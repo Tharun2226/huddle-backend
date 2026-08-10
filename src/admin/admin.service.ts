@@ -68,22 +68,52 @@ export class AdminService {
       where: { id: user.organizationId },
     });
     if (!org) throw new NotFoundException('Organization not found');
-    return { id: org.id, name: org.name, slug: org.slug };
+    return {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      meetingMode: org.meetingMode,
+    };
   }
 
-  async renameOrg(user: AuthUser, name: string) {
-    const slug = name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'org';
+  async updateOrg(
+    user: AuthUser,
+    dto: { name?: string; meetingMode?: 'BOTH' | 'ONLINE_ONLY' | 'IN_PERSON_ONLY' },
+  ) {
+    const data: {
+      name?: string;
+      slug?: string;
+      meetingMode?: 'BOTH' | 'ONLINE_ONLY' | 'IN_PERSON_ONLY';
+    } = {};
 
-    return this.prisma.organization.update({
+    if (dto.name != null && dto.name.trim().length >= 2) {
+      const name = dto.name.trim();
+      data.name = name;
+      data.slug =
+        name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 40) || 'org';
+    }
+    if (dto.meetingMode != null) {
+      data.meetingMode = dto.meetingMode;
+    }
+    if (Object.keys(data).length === 0) {
+      return this.getOrg(user);
+    }
+
+    const org = await this.prisma.organization.update({
       where: { id: user.organizationId },
-      data: { name: name.trim(), slug },
-      select: { id: true, name: true, slug: true },
+      data,
+      select: { id: true, name: true, slug: true, meetingMode: true },
     });
+    return org;
+  }
+
+  /** @deprecated use updateOrg */
+  async renameOrg(user: AuthUser, name: string) {
+    return this.updateOrg(user, { name });
   }
 
   // --- Roles ---
