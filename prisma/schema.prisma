@@ -61,13 +61,21 @@ enum DevicePlatform {
   web
 }
 
+enum MeetingMode {
+  BOTH
+  ONLINE_ONLY
+  IN_PERSON_ONLY
+}
+
 model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  slug      String   @unique
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String      @id @default(cuid())
+  name        String
+  slug        String      @unique
+  isActive    Boolean     @default(true)
+  /// Which meeting types members may create.
+  meetingMode MeetingMode @default(BOTH)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
   users           User[]
   tasks           Task[]
@@ -246,6 +254,8 @@ model Task {
   dueReminderSentAt DateTime?
   assigneeId     String
   tags           String[] @default([])
+  /// People outside the org (free-text names): ["Alice", "Bob"]
+  externalAssignees Json @default("[]")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

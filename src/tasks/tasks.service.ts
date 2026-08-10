@@ -106,6 +106,9 @@ export class TasksService {
     const tags = [
       ...new Set((dto.tags ?? []).map((t) => t.trim()).filter(Boolean)),
     ];
+    const externalAssignees = this.normalizeExternalAssignees(
+      dto.externalAssignees,
+    );
 
     const primaryId = assigneeIds[0];
     const task = await this.prisma.task.create({
@@ -118,6 +121,7 @@ export class TasksService {
         priorityId,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         tags,
+        externalAssignees,
         assignees: {
           create: assigneeIds.map((userId) => ({ userId })),
         },
@@ -169,6 +173,10 @@ export class TasksService {
       dto.tags === undefined
         ? undefined
         : [...new Set(dto.tags.map((t) => t.trim()).filter(Boolean))];
+    const externalAssignees =
+      dto.externalAssignees === undefined
+        ? undefined
+        : this.normalizeExternalAssignees(dto.externalAssignees);
 
     const task = await this.prisma.$transaction(async (tx) => {
       if (nextAssigneeIds) {
@@ -193,6 +201,7 @@ export class TasksService {
                 ? new Date(dto.dueDate)
                 : undefined,
           tags,
+          ...(externalAssignees !== undefined ? { externalAssignees } : {}),
         },
         include: taskInclude,
       });
@@ -343,6 +352,36 @@ export class TasksService {
     return task;
   }
 
+  private normalizeExternalAssignees(raw?: string[]): string[] {
+    if (!raw?.length) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const entry of raw) {
+      const name = entry.trim().replace(/\s+/g, ' ');
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
+  }
+
+  private mapExternalAssignees(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const names: string[] = [];
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const n = item.trim();
+        if (n) names.push(n);
+      } else if (item && typeof item === 'object' && 'name' in item) {
+        const n = String((item as { name?: unknown }).name ?? '').trim();
+        if (n) names.push(n);
+      }
+    }
+    return this.normalizeExternalAssignees(names);
+  }
+
   private async ensureUserInOrg(organizationId: string, userId: string) {
     const u = await this.prisma.user.findFirst({
       where: { id: userId, organizationId },
@@ -395,6 +434,7 @@ export class TasksService {
       assigneeName: task.assignee?.name ?? null,
       assigneeIds,
       assigneeNames,
+      externalAssignees: this.mapExternalAssignees(task.externalAssignees),
       tags: task.tags ?? [],
       createdAt: task.createdAt.toISOString(),
       checklist: (task.checklist ?? []).map((c: any) => ({

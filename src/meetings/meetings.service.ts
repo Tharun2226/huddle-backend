@@ -186,6 +186,22 @@ export class MeetingsService {
     }
 
     const isOnline = dto.isOnline !== false;
+    const org = await this.prisma.organization.findUnique({
+      where: { id: user.organizationId },
+      select: { meetingMode: true },
+    });
+    const mode = org?.meetingMode ?? 'BOTH';
+    if (mode === 'ONLINE_ONLY' && !isOnline) {
+      throw new BadRequestException(
+        'This organization only allows online meetings',
+      );
+    }
+    if (mode === 'IN_PERSON_ONLY' && isOnline) {
+      throw new BadRequestException(
+        'This organization only allows in-person meetings',
+      );
+    }
+
     const externalAttendees = (dto.externalAttendees ?? [])
       .map((g) => ({
         name: g.name.trim(),

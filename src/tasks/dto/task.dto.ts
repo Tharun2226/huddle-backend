@@ -66,6 +66,16 @@ export class CreateTaskDto {
   @IsArray()
   @IsString({ each: true })
   checklist?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Client contact', 'Vendor lead'],
+    description: 'Free-text people outside the organization',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  externalAssignees?: string[];
 }
 
 export class UpdateTaskDto {
@@ -112,6 +122,15 @@ export class UpdateTaskDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Free-text people outside the organization',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  externalAssignees?: string[];
 }
 
 export class AddCommentDto {

@@ -1,9 +1,19 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MinLength } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { MeetingMode } from '@prisma/client';
+import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateOrgDto {
-  @ApiProperty({ example: 'New Org Name' })
+  @ApiPropertyOptional({ example: 'New Org Name' })
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  name!: string;
+  name?: string;
+
+  @ApiPropertyOptional({
+    enum: MeetingMode,
+    description: 'BOTH | ONLINE_ONLY | IN_PERSON_ONLY',
+  })
+  @IsOptional()
+  @IsEnum(MeetingMode)
+  meetingMode?: MeetingMode;
 }

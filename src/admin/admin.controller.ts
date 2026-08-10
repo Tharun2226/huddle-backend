@@ -43,8 +43,8 @@ export class AdminController {
 
   @Patch('org')
   @RequirePermissions('org.settings')
-  renameOrg(@CurrentUser() user: AuthUser, @Body() dto: UpdateOrgDto) {
-    return this.admin.renameOrg(user, dto.name);
+  updateOrg(@CurrentUser() user: AuthUser, @Body() dto: UpdateOrgDto) {
+    return this.admin.updateOrg(user, dto);
   }
 
   // --- Roles ---

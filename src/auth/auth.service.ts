@@ -185,7 +185,11 @@ export class AuthService {
   }
 
   private async getOrgConfig(organizationId: string) {
-    const [roles, taskStatuses, taskPriorities, taskTags] = await Promise.all([
+    const [org, roles, taskStatuses, taskPriorities, taskTags] = await Promise.all([
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { meetingMode: true },
+      }),
       this.prisma.role.findMany({
         where: { organizationId },
         orderBy: { sortOrder: 'asc' },
@@ -205,6 +209,7 @@ export class AuthService {
     ]);
 
     return {
+      meetingMode: org?.meetingMode ?? 'BOTH',
       roles: roles.map((r) => ({
         id: r.id,
         name: r.name,
