@@ -73,17 +73,23 @@ export class AdminService {
       name: org.name,
       slug: org.slug,
       meetingMode: org.meetingMode,
+      showTags: org.showTags,
     };
   }
 
   async updateOrg(
     user: AuthUser,
-    dto: { name?: string; meetingMode?: 'BOTH' | 'ONLINE_ONLY' | 'IN_PERSON_ONLY' },
+    dto: {
+      name?: string;
+      meetingMode?: 'BOTH' | 'ONLINE_ONLY' | 'IN_PERSON_ONLY';
+      showTags?: boolean;
+    },
   ) {
     const data: {
       name?: string;
       slug?: string;
       meetingMode?: 'BOTH' | 'ONLINE_ONLY' | 'IN_PERSON_ONLY';
+      showTags?: boolean;
     } = {};
 
     if (dto.name != null && dto.name.trim().length >= 2) {
@@ -99,6 +105,9 @@ export class AdminService {
     if (dto.meetingMode != null) {
       data.meetingMode = dto.meetingMode;
     }
+    if (dto.showTags != null) {
+      data.showTags = dto.showTags;
+    }
     if (Object.keys(data).length === 0) {
       return this.getOrg(user);
     }
@@ -106,7 +115,13 @@ export class AdminService {
     const org = await this.prisma.organization.update({
       where: { id: user.organizationId },
       data,
-      select: { id: true, name: true, slug: true, meetingMode: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        meetingMode: true,
+        showTags: true,
+      },
     });
     return org;
   }
