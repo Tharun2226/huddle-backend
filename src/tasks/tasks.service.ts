@@ -74,18 +74,14 @@ export class TasksService {
       dto.assigneeId,
     );
 
-    if (assigneeIds.length === 0 && externalAssignees.length === 0) {
-      throw new BadRequestException(
-        'Select at least one assignee or add other people',
-      );
+    if (assigneeIds.length === 0) {
+      throw new BadRequestException('Select at least one org assignee');
     }
     if (!dto.dueDate) {
       throw new BadRequestException('Due date is required');
     }
 
-    if (assigneeIds.length > 0) {
-      await this.assertCanAssign(user, assigneeIds);
-    }
+    await this.assertCanAssign(user, assigneeIds);
 
     let statusId = dto.statusId;
     if (!statusId) {
@@ -125,7 +121,7 @@ export class TasksService {
       ...new Set((dto.tags ?? []).map((t) => t.trim()).filter(Boolean)),
     ];
 
-    const primaryId = assigneeIds.length > 0 ? assigneeIds[0] : user.id;
+    const primaryId = assigneeIds[0];
     const task = await this.prisma.task.create({
       data: {
         organizationId: user.organizationId,
@@ -137,12 +133,9 @@ export class TasksService {
         dueDate: new Date(dto.dueDate),
         tags,
         externalAssignees,
-        assignees:
-          assigneeIds.length > 0
-            ? {
-                create: assigneeIds.map((userId) => ({ userId })),
-              }
-            : undefined,
+        assignees: {
+          create: assigneeIds.map((userId) => ({ userId })),
+        },
         checklist:
           checklistLabels.length > 0
             ? {
@@ -191,17 +184,10 @@ export class TasksService {
         dto.assigneeIds,
         dto.assigneeId,
       );
-      const ext =
-        externalAssignees ??
-        this.mapExternalAssignees(existing.externalAssignees);
-      if (nextAssigneeIds.length === 0 && ext.length === 0) {
-        throw new BadRequestException(
-          'Select at least one assignee or add other people',
-        );
+      if (nextAssigneeIds.length === 0) {
+        throw new BadRequestException('Select at least one org assignee');
       }
-      if (nextAssigneeIds.length > 0) {
-        await this.assertCanAssign(user, nextAssigneeIds);
-      }
+      await this.assertCanAssign(user, nextAssigneeIds);
     }
 
     if (dto.dueDate === null) {
@@ -225,11 +211,7 @@ export class TasksService {
       }
 
       const primaryAssignee =
-        nextAssigneeIds !== undefined
-          ? nextAssigneeIds.length > 0
-            ? nextAssigneeIds[0]
-            : user.id
-          : undefined;
+        nextAssigneeIds !== undefined ? nextAssigneeIds[0] : undefined;
 
       return tx.task.update({
         where: { id },
