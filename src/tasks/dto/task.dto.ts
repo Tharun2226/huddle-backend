@@ -1,6 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  ArrayMinSize,
   IsArray,
   IsDateString,
   IsOptional,
@@ -28,11 +27,11 @@ export class CreateTaskDto {
 
   @ApiPropertyOptional({
     type: [String],
-    description: 'One or more assignees (FE + BE, etc.)',
+    description:
+      'Org assignees. May be empty when externalAssignees has at least one name.',
   })
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
   assigneeIds?: string[];
 
@@ -94,10 +93,13 @@ export class UpdateTaskDto {
   @IsString()
   assigneeId?: string;
 
-  @ApiPropertyOptional({ type: [String] })
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Org assignees. May be empty when externalAssignees has at least one name.',
+  })
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
   assigneeIds?: string[];
 
