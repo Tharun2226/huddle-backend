@@ -66,8 +66,26 @@ export class TasksService {
   }
 
   async create(user: AuthUser, dto: CreateTaskDto) {
-    const assigneeIds = this.resolveAssigneeIds(dto.assigneeIds, dto.assigneeId);
-    await this.assertCanAssign(user, assigneeIds);
+    const externalAssignees = this.normalizeExternalAssignees(
+      dto.externalAssignees,
+    );
+    const assigneeIds = this.resolveAssigneeIdsOptional(
+      dto.assigneeIds,
+      dto.assigneeId,
+    );
+
+    if (assigneeIds.length === 0 && externalAssignees.length === 0) {
+      throw new BadRequestException(
+        'Select at least one assignee or add other people',
+      );
+    }
+    if (!dto.dueDate) {
+      throw new BadRequestException('Due date is required');
+    }
+
+    if (assigneeIds.length > 0) {
+      await this.assertCanAssign(user, assigneeIds);
+    }
 
     let statusId = dto.statusId;
     if (!statusId) {
@@ -106,11 +124,8 @@ export class TasksService {
     const tags = [
       ...new Set((dto.tags ?? []).map((t) => t.trim()).filter(Boolean)),
     ];
-    const externalAssignees = this.normalizeExternalAssignees(
-      dto.externalAssignees,
-    );
 
-    const primaryId = assigneeIds[0];
+    const primaryId = assigneeIds.length > 0 ? assigneeIds[0] : user.id;
     const task = await this.prisma.task.create({
       data: {
         organizationId: user.organizationId,
@@ -119,12 +134,15 @@ export class TasksService {
         assigneeId: primaryId,
         statusId,
         priorityId,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+        dueDate: new Date(dto.dueDate),
         tags,
         externalAssignees,
-        assignees: {
-          create: assigneeIds.map((userId) => ({ userId })),
-        },
+        assignees:
+          assigneeIds.length > 0
+            ? {
+                create: assigneeIds.map((userId) => ({ userId })),
+              }
+            : undefined,
         checklist:
           checklistLabels.length > 0
             ? {
@@ -163,9 +181,31 @@ export class TasksService {
     }
 
     let nextAssigneeIds: string[] | undefined;
-    if (dto.assigneeIds?.length || dto.assigneeId) {
-      nextAssigneeIds = this.resolveAssigneeIds(dto.assigneeIds, dto.assigneeId);
-      await this.assertCanAssign(user, nextAssigneeIds);
+    const externalAssignees =
+      dto.externalAssignees === undefined
+        ? undefined
+        : this.normalizeExternalAssignees(dto.externalAssignees);
+
+    if (dto.assigneeIds !== undefined || dto.assigneeId !== undefined) {
+      nextAssigneeIds = this.resolveAssigneeIdsOptional(
+        dto.assigneeIds,
+        dto.assigneeId,
+      );
+      const ext =
+        externalAssignees ??
+        this.mapExternalAssignees(existing.externalAssignees);
+      if (nextAssigneeIds.length === 0 && ext.length === 0) {
+        throw new BadRequestException(
+          'Select at least one assignee or add other people',
+        );
+      }
+      if (nextAssigneeIds.length > 0) {
+        await this.assertCanAssign(user, nextAssigneeIds);
+      }
+    }
+
+    if (dto.dueDate === null) {
+      throw new BadRequestException('Due date is required');
     }
 
     const prevStatusId = existing.statusId;
@@ -173,30 +213,35 @@ export class TasksService {
       dto.tags === undefined
         ? undefined
         : [...new Set(dto.tags.map((t) => t.trim()).filter(Boolean))];
-    const externalAssignees =
-      dto.externalAssignees === undefined
-        ? undefined
-        : this.normalizeExternalAssignees(dto.externalAssignees);
 
     const task = await this.prisma.$transaction(async (tx) => {
-      if (nextAssigneeIds) {
+      if (nextAssigneeIds !== undefined) {
         await tx.taskAssignee.deleteMany({ where: { taskId: id } });
-        await tx.taskAssignee.createMany({
-          data: nextAssigneeIds.map((userId) => ({ taskId: id, userId })),
-        });
+        if (nextAssigneeIds.length > 0) {
+          await tx.taskAssignee.createMany({
+            data: nextAssigneeIds.map((userId) => ({ taskId: id, userId })),
+          });
+        }
       }
+
+      const primaryAssignee =
+        nextAssigneeIds !== undefined
+          ? nextAssigneeIds.length > 0
+            ? nextAssigneeIds[0]
+            : user.id
+          : undefined;
 
       return tx.task.update({
         where: { id },
         data: {
           title: dto.title,
           description: dto.description,
-          assigneeId: nextAssigneeIds?.[0],
+          assigneeId: primaryAssignee,
           statusId: dto.statusId,
           priorityId: dto.priorityId,
           dueDate:
-            dto.dueDate === null
-              ? null
+            dto.dueDate === undefined
+              ? undefined
               : dto.dueDate
                 ? new Date(dto.dueDate)
                 : undefined,
@@ -294,21 +339,17 @@ export class TasksService {
     return this.mapTask(await this.findScoped(user, id));
   }
 
-  private resolveAssigneeIds(
+  private resolveAssigneeIdsOptional(
     assigneeIds: string[] | undefined,
     assigneeId: string | undefined,
   ): string[] {
     const raw =
-      assigneeIds && assigneeIds.length > 0
+      assigneeIds !== undefined
         ? assigneeIds
         : assigneeId
           ? [assigneeId]
           : [];
-    const ids = [...new Set(raw.map((id) => id.trim()).filter(Boolean))];
-    if (ids.length === 0) {
-      throw new BadRequestException('Select at least one assignee');
-    }
-    return ids;
+    return [...new Set(raw.map((id) => id.trim()).filter(Boolean))];
   }
 
   private async assertCanAssign(user: AuthUser, assigneeIds: string[]) {
@@ -398,16 +439,21 @@ export class TasksService {
       id: a.userId ?? a.user?.id,
       name: a.user?.name ?? '',
     }));
+    const externalAssignees = this.mapExternalAssignees(task.externalAssignees);
     const assigneeIds =
       fromJoin.length > 0
         ? [...new Set(fromJoin.map((a) => a.id).filter(Boolean))]
-        : [task.assigneeId];
+        : externalAssignees.length > 0
+          ? []
+          : [task.assigneeId];
     const assigneeNames =
       fromJoin.length > 0
         ? assigneeIds.map(
             (id) => fromJoin.find((a) => a.id === id)?.name ?? '',
           )
-        : [task.assignee?.name ?? ''];
+        : externalAssignees.length > 0
+          ? []
+          : [task.assignee?.name ?? ''];
 
     const statusSlug = status.slug ?? 'todo';
     return {

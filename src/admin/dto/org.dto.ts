@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { MeetingMode } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateOrgDto {
   @ApiPropertyOptional({ example: 'New Org Name' })
@@ -16,4 +16,11 @@ export class UpdateOrgDto {
   @IsOptional()
   @IsEnum(MeetingMode)
   meetingMode?: MeetingMode;
+
+  @ApiPropertyOptional({
+    description: 'Whether task tags are shown in the app',
+  })
+  @IsOptional()
+  @IsBoolean()
+  showTags?: boolean;
 }

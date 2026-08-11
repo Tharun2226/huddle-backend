@@ -188,7 +188,7 @@ export class AuthService {
     const [org, roles, taskStatuses, taskPriorities, taskTags] = await Promise.all([
       this.prisma.organization.findUnique({
         where: { id: organizationId },
-        select: { meetingMode: true },
+        select: { meetingMode: true, showTags: true },
       }),
       this.prisma.role.findMany({
         where: { organizationId },
@@ -210,6 +210,7 @@ export class AuthService {
 
     return {
       meetingMode: org?.meetingMode ?? 'BOTH',
+      showTags: org?.showTags ?? true,
       roles: roles.map((r) => ({
         id: r.id,
         name: r.name,

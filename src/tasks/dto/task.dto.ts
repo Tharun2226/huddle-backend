@@ -46,10 +46,9 @@ export class CreateTaskDto {
   @IsString()
   priorityId?: string;
 
-  @ApiPropertyOptional({ example: '2026-08-01T10:00:00.000Z' })
-  @IsOptional()
+  @ApiProperty({ example: '2026-08-01T10:00:00.000Z' })
   @IsDateString()
-  dueDate?: string;
+  dueDate!: string;
 
   @ApiPropertyOptional({ type: [String], example: ['Frontend', 'Backend'] })
   @IsOptional()
