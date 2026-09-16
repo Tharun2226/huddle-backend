@@ -153,11 +153,26 @@ export class TasksService {
       };
     }
 
-    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    const raw = Buffer.from(await workbook.xlsx.writeBuffer());
+    const buffer = await this.sanitizeXlsxStyles(raw);
     return {
       buffer,
       fileName: 'tasks import sheet.xlsx',
     };
+  }
+
+  /** Dart `excel` package crashes on custom numFmtId < 164 (common after Sheets/Excel). */
+  private async sanitizeXlsxStyles(buffer: Buffer): Promise<Buffer> {
+    // exceljs depends on jszip
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const JSZip = require('jszip') as typeof import('jszip');
+    const zip = await JSZip.loadAsync(buffer);
+    const stylesFile = zip.file('xl/styles.xml');
+    if (!stylesFile) return buffer;
+    let styles = await stylesFile.async('string');
+    styles = styles.replace(/<numFmts\b[^>]*>[\s\S]*?<\/numFmts>/gi, '');
+    zip.file('xl/styles.xml', styles);
+    return Buffer.from(await zip.generateAsync({ type: 'uint8array' }));
   }
 
   async importMany(user: AuthUser, dto: ImportTasksDto) {
