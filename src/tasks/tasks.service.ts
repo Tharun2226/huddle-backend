@@ -1,10 +1,12 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityType } from '@prisma/client';
+import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.types';
 import { recordActivity } from '../common/activity.util';
@@ -13,6 +15,7 @@ import { getScopedUserIds } from '../common/team-scope';
 import {
   AddCommentDto,
   CreateTaskDto,
+  ImportTasksDto,
   UpdateTaskDto,
   UpsertChecklistItemDto,
 } from './dto/task.dto';
@@ -63,6 +66,204 @@ export class TasksService {
   async get(user: AuthUser, id: string) {
     const task = await this.findScoped(user, id);
     return this.mapTask(task);
+  }
+
+  async buildImportTemplate(user: AuthUser): Promise<{
+    buffer: Buffer;
+    fileName: string;
+  }> {
+    const [priorities, statuses] = await Promise.all([
+      this.prisma.orgTaskPriority.findMany({
+        where: { organizationId: user.organizationId, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+      this.prisma.orgTaskStatus.findMany({
+        where: { organizationId: user.organizationId, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+    ]);
+
+    const priorityNames =
+      priorities.length > 0
+        ? priorities.map((p) => p.name)
+        : ['Urgent', 'High', 'Normal', 'Low'];
+    const statusNames =
+      statuses.length > 0
+        ? statuses.map((s) => s.name)
+        : ['To Do', 'In Progress', 'In Review', 'Done'];
+
+    const defaultPriority =
+      priorities.find((p) => p.isDefault)?.name ??
+      priorityNames.find((n) => n.toLowerCase() === 'normal') ??
+      priorityNames[0];
+    const defaultStatus =
+      statuses.find((s) => s.isDefault)?.name ??
+      statusNames.find((n) => n.toLowerCase() === 'to do') ??
+      statusNames[0];
+
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${yyyy}-${mm}-${dd}`;
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Huddle';
+    workbook.created = new Date();
+
+    const tasks = workbook.addWorksheet('Tasks');
+    tasks.columns = [
+      { header: 'Title', key: 'title', width: 40 },
+      { header: 'Description', key: 'description', width: 36 },
+      { header: 'Date', key: 'date', width: 14 },
+      { header: 'Time', key: 'time', width: 12 },
+      { header: 'Assignees', key: 'assignees', width: 28 },
+      { header: 'Priority', key: 'priority', width: 14 },
+      { header: 'Status', key: 'status', width: 16 },
+    ];
+    tasks.getRow(1).font = { bold: true };
+
+    // Only the first data row is prefilled.
+    tasks.getCell('C2').value = todayStr;
+    tasks.getCell('D2').value = '9:00 AM';
+    tasks.getCell('F2').value = defaultPriority;
+    tasks.getCell('G2').value = defaultStatus;
+
+    // Native Excel list dropdown — opens when the cell is selected.
+    const priorityList = `"${priorityNames.join(',')}"`;
+    const statusList = `"${statusNames.join(',')}"`;
+    for (let r = 2; r <= 200; r++) {
+      tasks.getCell(`F${r}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [priorityList],
+        showErrorMessage: true,
+        showInputMessage: false,
+        errorTitle: 'Invalid priority',
+        error: 'Pick a priority from the dropdown.',
+      };
+      tasks.getCell(`G${r}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [statusList],
+        showErrorMessage: true,
+        showInputMessage: false,
+        errorTitle: 'Invalid status',
+        error: 'Pick a status from the dropdown.',
+      };
+    }
+
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    return {
+      buffer,
+      fileName: 'tasks import sheet.xlsx',
+    };
+  }
+
+  async importMany(user: AuthUser, dto: ImportTasksDto) {
+    const [orgUsers, statuses, priorities] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { organizationId: user.organizationId },
+        select: { id: true, name: true },
+      }),
+      this.prisma.orgTaskStatus.findMany({
+        where: { organizationId: user.organizationId, isActive: true },
+      }),
+      this.prisma.orgTaskPriority.findMany({
+        where: { organizationId: user.organizationId, isActive: true },
+      }),
+    ]);
+
+    const usersByName = new Map<string, string[]>();
+    for (const u of orgUsers) {
+      const key = u.name.trim().toLowerCase();
+      if (!key) continue;
+      const list = usersByName.get(key) ?? [];
+      list.push(u.id);
+      usersByName.set(key, list);
+    }
+
+    const statusByKey = new Map<string, string>();
+    for (const s of statuses) {
+      statusByKey.set(s.name.trim().toLowerCase(), s.id);
+      statusByKey.set(s.slug.trim().toLowerCase(), s.id);
+    }
+    const priorityByKey = new Map<string, string>();
+    for (const p of priorities) {
+      priorityByKey.set(p.name.trim().toLowerCase(), p.id);
+      priorityByKey.set(p.slug.trim().toLowerCase(), p.id);
+    }
+
+    const created: Awaited<ReturnType<TasksService['create']>>[] = [];
+    const failed: { row: number; title: string; error: string }[] = [];
+
+    for (let i = 0; i < dto.rows.length; i++) {
+      const row = dto.rows[i];
+      const rowNum = i + 1;
+      try {
+        const title = row.title.trim();
+        if (!title) {
+          throw new BadRequestException('Title is required');
+        }
+
+        const dueDate = new Date(row.dueDate);
+        if (Number.isNaN(dueDate.getTime())) {
+          throw new BadRequestException('Invalid due date');
+        }
+        const { assigneeIds, externalAssignees } = this.resolveImportAssignees(
+          user,
+          row.assignees,
+          usersByName,
+        );
+
+        let statusId: string | undefined;
+        if (row.status?.trim()) {
+          const statusKey = this.stripImportLabel(row.status);
+          statusId = statusByKey.get(statusKey);
+          if (!statusId) {
+            throw new BadRequestException(
+              `Unknown status "${statusKey}"`,
+            );
+          }
+        }
+
+        let priorityId: string | undefined;
+        if (row.priority?.trim()) {
+          const priorityKey = this.stripImportLabel(row.priority);
+          priorityId = priorityByKey.get(priorityKey);
+          if (!priorityId) {
+            throw new BadRequestException(
+              `Unknown priority "${priorityKey}"`,
+            );
+          }
+        }
+
+        const task = await this.create(user, {
+          title,
+          description: row.description?.trim() || undefined,
+          dueDate: dueDate.toISOString(),
+          assigneeIds,
+          externalAssignees,
+          statusId,
+          priorityId,
+          tags: [],
+        });
+        created.push(task);
+      } catch (err) {
+        failed.push({
+          row: rowNum,
+          title: row.title?.trim() || '',
+          error: this.importErrorMessage(err),
+        });
+      }
+    }
+
+    return {
+      createdCount: created.length,
+      failedCount: failed.length,
+      created,
+      failed,
+    };
   }
 
   async create(user: AuthUser, dto: CreateTaskDto) {
@@ -337,6 +538,79 @@ export class TasksService {
       data: { done: !item.done },
     });
     return this.mapTask(await this.findScoped(user, id));
+  }
+
+  private stripImportLabel(raw: string): string {
+    return raw
+      .trim()
+      .replace(/\s*[▼▾]\s*$/u, '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private importErrorMessage(err: unknown): string {
+    if (err instanceof HttpException) {
+      const res = err.getResponse();
+      if (typeof res === 'string') return res;
+      if (res && typeof res === 'object' && 'message' in res) {
+        const msg = (res as { message?: string | string[] }).message;
+        if (Array.isArray(msg)) return msg.join(', ');
+        if (typeof msg === 'string' && msg.trim()) return msg;
+      }
+      return err.message;
+    }
+    if (err instanceof Error) return err.message;
+    return 'Failed to import row';
+  }
+
+  private resolveImportAssignees(
+    user: AuthUser,
+    assigneesRaw: string | undefined,
+    usersByName: Map<string, string[]>,
+  ): { assigneeIds: string[]; externalAssignees: string[] } {
+    const names = this.splitImportNames(assigneesRaw);
+    if (names.length === 0) {
+      return { assigneeIds: [user.id], externalAssignees: [] };
+    }
+
+    const assigneeIds: string[] = [];
+    const externalAssignees: string[] = [];
+    const seenIds = new Set<string>();
+    const seenExt = new Set<string>();
+
+    for (const name of names) {
+      const matches = usersByName.get(name.toLowerCase()) ?? [];
+      if (matches.length > 0) {
+        const id = matches[0];
+        if (!seenIds.has(id)) {
+          seenIds.add(id);
+          assigneeIds.push(id);
+        }
+      } else {
+        const key = name.toLowerCase();
+        if (!seenExt.has(key)) {
+          seenExt.add(key);
+          externalAssignees.push(name);
+        }
+      }
+    }
+
+    return { assigneeIds, externalAssignees };
+  }
+
+  private splitImportNames(raw?: string): string[] {
+    if (!raw?.trim()) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const part of raw.split(/[\n,;]+/)) {
+      const name = part.trim().replace(/\s+/g, ' ');
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
   }
 
   private resolveAssigneeIdsOptional(

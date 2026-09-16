@@ -1,10 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsDateString,
   IsOptional,
   IsString,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 export class CreateTaskDto {
@@ -150,4 +153,51 @@ export class UpsertChecklistItemDto {
   @ApiPropertyOptional()
   @IsOptional()
   done?: boolean;
+}
+
+export class ImportTaskRowDto {
+  @ApiProperty({ example: 'Teleconference on E3, E13, E15' })
+  @IsString()
+  @MinLength(1)
+  title!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({
+    example: '2026-08-11T09:00:00.000Z',
+    description: 'Due instant (local date+time encoded as UTC ISO)',
+  })
+  @IsDateString()
+  dueDate!: string;
+
+  @ApiPropertyOptional({
+    example: 'PVK Bhaskar, Uma',
+    description:
+      'Comma/semicolon-separated names. Matched org users become assignees; unmatched go to Others. Empty → current user.',
+  })
+  @IsOptional()
+  @IsString()
+  assignees?: string;
+
+  @ApiPropertyOptional({ example: 'Normal' })
+  @IsOptional()
+  @IsString()
+  priority?: string;
+
+  @ApiPropertyOptional({ example: 'To Do' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
+
+export class ImportTasksDto {
+  @ApiProperty({ type: [ImportTaskRowDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ImportTaskRowDto)
+  rows!: ImportTaskRowDto[];
 }

@@ -3,12 +3,14 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/roles.decorator';
 import { CurrentUser } from '../common/current-user.decorator';
@@ -17,6 +19,7 @@ import { TasksService } from './tasks.service';
 import {
   AddCommentDto,
   CreateTaskDto,
+  ImportTasksDto,
   UpdateTaskDto,
   UpsertChecklistItemDto,
 } from './dto/task.dto';
@@ -31,6 +34,27 @@ export class TasksController {
   @Get()
   list(@CurrentUser() user: AuthUser) {
     return this.tasks.list(user);
+  }
+
+  @Get('import/template')
+  @ApiProduces(
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+  @Header(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+  async importTemplate(@CurrentUser() user: AuthUser): Promise<StreamableFile> {
+    const { buffer, fileName } = await this.tasks.buildImportTemplate(user);
+    return new StreamableFile(buffer, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      disposition: `attachment; filename="${fileName}"`,
+    });
+  }
+
+  @Post('import')
+  importTasks(@CurrentUser() user: AuthUser, @Body() dto: ImportTasksDto) {
+    return this.tasks.importMany(user, dto);
   }
 
   @Get(':id')
