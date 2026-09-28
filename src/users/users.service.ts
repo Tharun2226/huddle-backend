@@ -91,6 +91,20 @@ export class UsersService {
     return this.toPublic(created);
   }
 
+  async renameSelf(actor: AuthUser, name: string) {
+    const trimmed = name.trim().replace(/\s+/g, ' ');
+    if (trimmed.length < 2) {
+      throw new BadRequestException('Name must be at least 2 characters');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: actor.id },
+      data: { name: trimmed },
+      include: { roles: { include: { role: true } }, manager: true },
+    });
+    return this.toPublic(updated);
+  }
+
   async update(actor: AuthUser, userId: string, dto: UpdateUserDto) {
     if (!actor.isAdmin && !actor.permissions.includes('user.update')) {
       throw new ForbiddenException('You do not have permission to update users');
