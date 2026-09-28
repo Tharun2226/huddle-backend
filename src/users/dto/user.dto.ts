@@ -41,6 +41,13 @@ export class InviteUserDto {
   managerId?: string;
 }
 
+export class RenameMeDto {
+  @ApiProperty({ example: 'Additional Commissioner, APCRDA' })
+  @IsString()
+  @MinLength(2)
+  name!: string;
+}
+
 export class UpdateUserDto {
   @ApiPropertyOptional({ description: 'Role ID to assign' })
   @IsOptional()

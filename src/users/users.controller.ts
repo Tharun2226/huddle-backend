@@ -5,7 +5,7 @@ import { PermissionsGuard, RequirePermissions } from '../common/roles.decorator'
 import { CurrentUser } from '../common/current-user.decorator';
 import { AuthUser } from '../auth/auth.types';
 import { UsersService } from './users.service';
-import { InviteUserDto, UpdateUserDto } from './dto/user.dto';
+import { InviteUserDto, RenameMeDto, UpdateUserDto } from './dto/user.dto';
 
 @ApiTags('users')
 @ApiBearerAuth('access-token')
@@ -23,6 +23,11 @@ export class UsersController {
   @RequirePermissions('user.invite')
   invite(@CurrentUser() user: AuthUser, @Body() dto: InviteUserDto) {
     return this.users.invite(user, dto);
+  }
+
+  @Patch('me')
+  renameMe(@CurrentUser() user: AuthUser, @Body() dto: RenameMeDto) {
+    return this.users.renameSelf(user, dto.name);
   }
 
   @Patch(':id')
